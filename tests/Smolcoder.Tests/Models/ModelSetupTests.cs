@@ -139,6 +139,14 @@ public sealed class ModelSetupTests
         }
     }
 
+    [Fact]
+    public void SecretsFileAcceptsEnvStyleLines()
+    {
+        System.Text.Json.Nodes.JsonObject secrets = FileSecretStore.FromLines("# mine\nexport DEEPSEEK_API_KEY=\"sk-abc\"\nother=1\n");
+        Assert.Equal("sk-abc", secrets[SecretNames.DeepSeek]!.GetValue<string>());
+        Assert.Equal("1", secrets["other"]!.GetValue<string>());
+    }
+
     private static ModelDescriptor Model(string id, string backend, string? host)
     {
         ModelDescriptor model = new ModelDescriptor(id, backend, "http://" + (host ?? "localhost"), 8192);

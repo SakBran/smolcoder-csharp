@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using Smolcoder.Application.Abstractions.Persistence;
 
@@ -71,17 +72,59 @@ public sealed class FileSecretStore : ISecretStore
                 // Someone widened it, or an old copy was restored. Close it again.
                 File.SetUnixFileMode(path, PrivateFile);
             }
-            JsonObject? parsed = JsonNode.Parse(File.ReadAllText(path)) as JsonObject;
-            if (parsed == null)
+            string text = File.ReadAllText(path);
+            try
             {
-                return new JsonObject();
+                JsonObject? parsed = JsonNode.Parse(text) as JsonObject;
+                if (parsed != null)
+                {
+                    return parsed;
+                }
             }
-            return parsed;
+            catch (JsonException)
+            {
+                // Edited by hand, perhaps as KEY=value lines.
+            }
+            return FromLines(text);
         }
         catch (Exception)
         {
             return new JsonObject();
         }
+    }
+
+    /// <summary>
+    /// Reads "DEEPSEEK_API_KEY=sk-..." lines, the shape people know from .env files.
+    /// The next save rewrites the file as JSON.
+    /// </summary>
+    public static JsonObject FromLines(string text)
+    {
+        JsonObject secrets = new JsonObject();
+        foreach (string raw in text.Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.StartsWith("export ", StringComparison.Ordinal))
+            {
+                line = line.Substring(7).Trim();
+            }
+            int equals = line.IndexOf('=');
+            if (line.StartsWith("#", StringComparison.Ordinal) || equals <= 0)
+            {
+                continue;
+            }
+            string name = line.Substring(0, equals).Trim();
+            string value = line.Substring(equals + 1).Trim().Trim('"', '\'');
+            if (value.Length == 0)
+            {
+                continue;
+            }
+            if (name.Equals("DEEPSEEK_API_KEY", StringComparison.OrdinalIgnoreCase))
+            {
+                name = SecretNames.DeepSeek;
+            }
+            secrets[name] = value;
+        }
+        return secrets;
     }
 
     private static void Write(JsonObject secrets)
