@@ -3,6 +3,20 @@ using Smolcoder.Application.Abstractions.Providers;
 
 namespace Smolcoder.Application.Sessions;
 
+/// <summary>
+/// The model a session asked for is not among the detected ones.
+/// </summary>
+public sealed class ModelNotFoundException : InvalidOperationException
+{
+    public ModelNotFoundException(string wanted)
+        : base("Model \"" + wanted + "\" was not found on the selected backend. Use /models to choose an available model.")
+    {
+        Wanted = wanted;
+    }
+
+    public string Wanted { get; }
+}
+
 public sealed class ModelSelector : IModelSelector
 {
     private readonly IModelCatalog catalog;
@@ -23,7 +37,14 @@ public sealed class ModelSelector : IModelSelector
         {
             url = preferences.BaseUrl;
         }
-        IReadOnlyList<ModelDescriptor> detected = await catalog.DetectAsync(cancellationToken);
+        ModelDetectOptions options = new ModelDetectOptions();
+        string? remembered = settings.LastModel;
+        if (preferences.Model == null && remembered != null)
+        {
+            // Stop looking once the remembered model answers; a switched-off machine need not be waited for.
+            options.Until = model => model.Id == remembered && (url == null || model.BaseUrl == url);
+        }
+        IReadOnlyList<ModelDescriptor> detected = await catalog.DetectAsync(options, cancellationToken);
         List<ModelDescriptor> models = detected
             .Where(model => preferences.Backend == null || model.Backend == preferences.Backend)
             .ToList();
@@ -34,7 +55,9 @@ public sealed class ModelSelector : IModelSelector
         ModelDescriptor chosen = AutoPick(models, preferences.Model, settings.LastModel, url);
         if (progress != null)
         {
-            progress("loading " + chosen.Id);
+            string where = chosen.Host == null || chosen.Host == "cloud" ? string.Empty : " on " + chosen.Host;
+            string memory = chosen.Backend == Backends.Ollama ? " into memory" : string.Empty;
+            progress("loading " + chosen.Id + memory + where);
         }
         return await catalog.ResolveContextWindowAsync(chosen, preferences.ContextWindow, cancellationToken);
     }
@@ -60,7 +83,7 @@ public sealed class ModelSelector : IModelSelector
             {
                 return hit;
             }
-            throw new InvalidOperationException("Model \"" + wanted + "\" was not found on the selected backend. Use /models to choose an available model.");
+            throw new ModelNotFoundException(wanted);
         }
 
         ModelDescriptor? rememberedHit = models.FirstOrDefault(model => model.Id == remembered && model.BaseUrl == url);
@@ -72,22 +95,37 @@ public sealed class ModelSelector : IModelSelector
         {
             return rememberedHit;
         }
-        // With nothing remembered, a model on this computer beats one elsewhere.
+        // With nothing remembered, a model on this computer beats one elsewhere,
+        // then Ollama (it loads on demand) beats an LM Studio model that is already in memory.
         List<ModelDescriptor> local = models.Where(model => model.Host == null).ToList();
         List<ModelDescriptor> pool = models.ToList();
         if (local.Count > 0)
         {
             pool = local;
         }
+        ModelDescriptor? ollama = pool.FirstOrDefault(model => model.Backend == Backends.Ollama && model.SupportsTools != false);
+        if (ollama != null)
+        {
+            return ollama;
+        }
+        ModelDescriptor? loaded = pool.FirstOrDefault(model => model.Backend == Backends.LmStudio && model.Loaded == true);
+        if (loaded != null)
+        {
+            return loaded;
+        }
         return pool[0];
     }
 
+    public const string NoModelsText = "No usable model found.\n\n"
+            + "smolcoder looks for a model server on this computer, on servers you added, and in the cloud. Any one of these works:\n"
+            + "  · Ollama: install it (brew install ollama, or https://ollama.com/download), start it, then: ollama pull qwen3\n"
+            + "  · LM Studio: download a model, then turn on the server under Developer → Local Server.\n"
+            + "  · Another machine or an OpenAI-compatible server (llama.cpp, vLLM…): add it in the web UI (smallcode --web).\n"
+            + "  · DeepSeek cloud: export DEEPSEEK_API_KEY=sk-... or paste a key in the web UI.\n\n"
+            + "Then run smallcode again.";
+
     public string NoModelsMessage()
     {
-        return "No usable model found.\n\n"
-            + "smolcoder connects to DeepSeek's cloud API.\n"
-            + "  · Set DEEPSEEK_API_KEY in your environment, for example: export DEEPSEEK_API_KEY=sk-...\n"
-            + "  · DEEPSEEK_BASE_URL points it at a proxy instead of api.deepseek.com.\n\n"
-            + "Then run smol again.";
+        return NoModelsText;
     }
 }

@@ -6,4 +6,7 @@
     <Project Path="src/Smolcoder.Infrastructure/Smolcoder.Infrastructure.csproj" />
     <Project Path="src/Smolcoder.Web/Smolcoder.Web.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Smolcoder.Tests/Smolcoder.Tests.csproj" />
+  </Folder>
 </Solution>

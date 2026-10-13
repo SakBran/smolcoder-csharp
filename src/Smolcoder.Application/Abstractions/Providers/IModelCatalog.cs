@@ -5,7 +5,10 @@ namespace Smolcoder.Application.Abstractions.Providers;
 /// </summary>
 public interface IModelCatalog
 {
-    Task<IReadOnlyList<ModelDescriptor>> DetectAsync(CancellationToken cancellationToken);
+    /// <summary>
+    /// Every model on this computer, on saved servers, and in the cloud. Null options means the defaults.
+    /// </summary>
+    Task<IReadOnlyList<ModelDescriptor>> DetectAsync(ModelDetectOptions? options, CancellationToken cancellationToken);
 
     /// <summary>
     /// Works out the context window to budget against. A --ctx override may change it.

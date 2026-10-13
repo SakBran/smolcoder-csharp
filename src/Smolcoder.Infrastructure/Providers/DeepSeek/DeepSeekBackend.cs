@@ -1,15 +1,14 @@
+using Smolcoder.Application.Abstractions.Persistence;
 using Smolcoder.Application.Abstractions.Providers;
 
 namespace Smolcoder.Infrastructure.Providers.DeepSeek;
 
 /// <summary>
-/// The DeepSeek cloud models available through DEEPSEEK_API_KEY.
-/// The key stays in the environment. It is never saved.
+/// The DeepSeek cloud models. The key comes from DEEPSEEK_API_KEY, or else from a key pasted
+/// into the web UI (the secret store). It is read on every call, so a pasted key works at once.
 /// </summary>
-public sealed class DeepSeekModelCatalog : IModelCatalog
+public sealed class DeepSeekBackend : IModelBackend
 {
-    public const string BackendName = "deepseek";
-
     /// <summary>
     /// Default budget. The model's 1M window would let a session grow (and bill) without ever compacting.
     /// --ctx raises it up to the maximum.
@@ -29,34 +28,40 @@ public sealed class DeepSeekModelCatalog : IModelCatalog
 
     private readonly IHttpClientFactory httpClientFactory;
     private readonly IInferenceScheduler scheduler;
+    private readonly ISecretStore secretStore;
 
-    public DeepSeekModelCatalog(IHttpClientFactory httpClientFactory, IInferenceScheduler scheduler)
+    public DeepSeekBackend(IHttpClientFactory httpClientFactory, IInferenceScheduler scheduler, ISecretStore secretStore)
     {
         this.httpClientFactory = httpClientFactory;
         this.scheduler = scheduler;
+        this.secretStore = secretStore;
     }
 
-    public Task<IReadOnlyList<ModelDescriptor>> DetectAsync(CancellationToken cancellationToken)
+    public string Name
+    {
+        get
+        {
+            return Backends.DeepSeek;
+        }
+    }
+
+    public IReadOnlyList<ModelDescriptor> Models()
     {
         List<ModelDescriptor> models = new List<ModelDescriptor>();
         if (ApiKey() != null)
         {
-            ModelDescriptor flash = new ModelDescriptor("deepseek-flash", BackendName, BaseUrl(), DefaultContextWindow);
+            ModelDescriptor flash = new ModelDescriptor("deepseek-flash", Backends.DeepSeek, BaseUrl(), DefaultContextWindow);
             flash.Host = "cloud";
             flash.MaxContext = MaxContextWindow;
             flash.SupportsVision = true;
+            flash.SupportsTools = true;
             models.Add(flash);
         }
-        IReadOnlyList<ModelDescriptor> result = models;
-        return Task.FromResult(result);
+        return models;
     }
 
     public Task<ModelDescriptor> ResolveContextWindowAsync(ModelDescriptor model, int? contextOverride, CancellationToken cancellationToken)
     {
-        if (contextOverride.HasValue && contextOverride.Value < 1024)
-        {
-            throw new ArgumentException("Context window must be a whole number of at least 1024 tokens.");
-        }
         ModelDescriptor resolved = model.Copy();
         if (contextOverride.HasValue)
         {
@@ -75,13 +80,13 @@ public sealed class DeepSeekModelCatalog : IModelCatalog
         string? key = ApiKey();
         if (key == null)
         {
-            throw new InvalidOperationException("DEEPSEEK_API_KEY is not set.");
+            throw new InvalidOperationException("No DeepSeek API key. Set DEEPSEEK_API_KEY or paste a key in the web UI.");
         }
         int maxOutput = Math.Min(CloudOutputBudget, model.ContextWindow / 4);
         return new DeepSeekProvider(httpClientFactory, scheduler, model.BaseUrl, key, model.Id, model.ContextWindow, maxOutput, model.SupportsVision);
     }
 
-    public string ResolveAlias(string name)
+    public static string ResolveAlias(string name)
     {
         string? current;
         if (ModelAliases.TryGetValue(name, out current))
@@ -91,17 +96,28 @@ public sealed class DeepSeekModelCatalog : IModelCatalog
         return name;
     }
 
-    private static string? ApiKey()
+    /// <summary>
+    /// True when DEEPSEEK_API_KEY is set. A key in the environment wins over a pasted one.
+    /// </summary>
+    public static bool KeyFromEnvironment
     {
-        string? key = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
-        if (key == null || key.Trim().Length == 0)
+        get
         {
-            return null;
+            return EnvironmentKey() != null;
         }
-        return key.Trim();
     }
 
-    private static string BaseUrl()
+    public string? ApiKey()
+    {
+        string? key = EnvironmentKey();
+        if (key != null)
+        {
+            return key;
+        }
+        return secretStore.Get(SecretNames.DeepSeek);
+    }
+
+    public static string BaseUrl()
     {
         string? configured = Environment.GetEnvironmentVariable("DEEPSEEK_BASE_URL");
         string url = DeepSeekProvider.DefaultBaseUrl;
@@ -110,5 +126,15 @@ public sealed class DeepSeekModelCatalog : IModelCatalog
             url = configured.Trim();
         }
         return url.TrimEnd('/');
+    }
+
+    private static string? EnvironmentKey()
+    {
+        string? key = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
+        if (key == null || key.Trim().Length == 0)
+        {
+            return null;
+        }
+        return key.Trim();
     }
 }

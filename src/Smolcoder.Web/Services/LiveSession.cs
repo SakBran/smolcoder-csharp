@@ -254,7 +254,7 @@ public sealed class LiveSession
     {
         StartError = message;
         Channel.Error(message);
-        Channel.Warn("Set DEEPSEEK_API_KEY, then click this session in the sidebar to retry.");
+        Channel.Warn("Fix the problem above, then click this session in the sidebar to retry.");
         Channel.SetStatus(SessionStatus.Error);
         RaiseChanged();
     }

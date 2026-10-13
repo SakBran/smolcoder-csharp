@@ -23,7 +23,7 @@ public sealed class CommandLineDefinition
         BypassOption.Description = "Same as --mode bypass";
 
         ModelOption = new Option<string?>("--model");
-        ModelOption.Description = "Pick a model by (partial) name, for example deepseek-flash";
+        ModelOption.Description = "Pick a model by (partial) name, for example qwen3 or deepseek-flash";
 
         ContextOption = new Option<int?>("--ctx");
         ContextOption.Description = "Context window to budget against, in tokens (at least 1024)";
@@ -44,7 +44,7 @@ public sealed class CommandLineDefinition
         WebOption.Description = "Browser UI on 127.0.0.1 (default port " + DefaultWebPort + ")";
         WebOption.Arity = ArgumentArity.ZeroOrOne;
 
-        Root = new RootCommand("smolcoder — a smol coding agent. Uses DeepSeek's cloud API (set DEEPSEEK_API_KEY).");
+        Root = new RootCommand("smolcoder — a smol coding agent. Finds Ollama, LM Studio and saved OpenAI-compatible servers on its own; DeepSeek cloud when DEEPSEEK_API_KEY is set.");
         Root.Arguments.Add(WorkspaceArgument);
         Root.Options.Add(ModeOption);
         Root.Options.Add(BypassOption);

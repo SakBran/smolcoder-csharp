@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using Smolcoder.Application.Abstractions.Persistence;
 using Smolcoder.Domain.Modes;
@@ -14,6 +15,7 @@ public sealed class SettingsStore : ISettingsStore
     private const string LastModelUrlKey = "lastModelUrl";
     private const string LastModeKey = "lastMode";
     private const string EffortKey = "effort";
+    private const string ServersKey = "servers";
 
     private readonly IDbContextFactory<SmolcoderDbContext> contextFactory;
 
@@ -71,6 +73,85 @@ public sealed class SettingsStore : ISettingsStore
                 }
                 Put(context, LastModeKey, mode);
                 Put(context, EffortKey, Efforts.Name(settings.Effort));
+                context.SaveChanges();
+            }
+        }
+        catch (Exception)
+        {
+            // Not fatal.
+        }
+    }
+
+    public IReadOnlyList<SavedServer> LoadServers()
+    {
+        List<SavedServer> servers = new List<SavedServer>();
+        try
+        {
+            using (SmolcoderDbContext context = contextFactory.CreateDbContext())
+            {
+                SettingEntity? row = context.Settings.AsNoTracking().FirstOrDefault(setting => setting.Key == ServersKey);
+                if (row == null)
+                {
+                    return servers;
+                }
+                JsonArray? items = JsonNode.Parse(row.Value) as JsonArray;
+                if (items == null)
+                {
+                    return servers;
+                }
+                foreach (JsonNode? item in items)
+                {
+                    JsonObject? entry = item as JsonObject;
+                    string? address = entry?["address"]?.GetValue<string>();
+                    if (entry == null || address == null || address.Length == 0)
+                    {
+                        continue;
+                    }
+                    ServerKind kind = ServerKind.Auto;
+                    if (entry["kind"]?.GetValue<string>() == "openai")
+                    {
+                        kind = ServerKind.OpenAiCompatible;
+                    }
+                    SavedServer server = new SavedServer(address, kind);
+                    server.Name = entry["name"]?.GetValue<string>();
+                    servers.Add(server);
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // A broken row gives no saved servers.
+        }
+        return servers;
+    }
+
+    public void SaveServers(IReadOnlyList<SavedServer> servers)
+    {
+        JsonArray items = new JsonArray();
+        foreach (SavedServer server in servers)
+        {
+            JsonObject entry = new JsonObject();
+            entry["address"] = server.Address;
+            if (server.Name != null)
+            {
+                entry["name"] = server.Name;
+            }
+            if (server.Kind == ServerKind.OpenAiCompatible)
+            {
+                entry["kind"] = "openai";
+            }
+            items.Add(entry);
+        }
+        try
+        {
+            using (SmolcoderDbContext context = contextFactory.CreateDbContext())
+            {
+                string? value = null;
+                if (servers.Count > 0)
+                {
+                    value = items.ToJsonString();
+                }
+                Put(context, ServersKey, value);
                 context.SaveChanges();
             }
         }

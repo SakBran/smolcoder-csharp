@@ -154,7 +154,7 @@ public sealed class InteractiveSession
         {
             ui.Warn("  " + Chosen.Note);
         }
-        string? advice = EffortAdvice();
+        string? advice = ModelAdvice.Effort(Chosen, Effort, false);
         if (advice != null)
         {
             ui.Warn("  " + advice);
@@ -175,6 +175,13 @@ public sealed class InteractiveSession
             {
                 await ShutdownAsync();
                 return;
+            }
+
+            if (input.ModelChoice != null)
+            {
+                await ApplyModelAsync(input.ModelChoice);
+                ui.Refresh();
+                continue;
             }
 
             if (input.Attachments.Count == 0 && input.Text.StartsWith("/", StringComparison.Ordinal))
@@ -199,6 +206,11 @@ public sealed class InteractiveSession
             catch (Exception exception)
             {
                 ui.Error("\n" + exception.Message);
+                string? hint = ModelAdvice.ForError(exception.Message);
+                if (hint != null)
+                {
+                    ui.Warn("  " + hint);
+                }
             }
             ui.Refresh();
         }
@@ -455,7 +467,9 @@ public sealed class InteractiveSession
         IReadOnlyList<ModelDescriptor> models;
         try
         {
-            models = await modelCatalog.DetectAsync(lifetime.Token);
+            ModelDetectOptions options = new ModelDetectOptions();
+            options.IncludeDetails = true;
+            models = await modelCatalog.DetectAsync(options, lifetime.Token);
         }
         finally
         {
@@ -463,28 +477,36 @@ public sealed class InteractiveSession
         }
         if (models.Count == 0)
         {
-            ui.Warn("No model is available right now. Check DEEPSEEK_API_KEY.");
+            ui.Warn(ModelSelector.NoModelsText);
             return;
         }
         List<SelectOption> rows = new List<SelectOption>();
         foreach (ModelDescriptor model in models)
         {
             bool current = model.Id == Chosen.Id && model.Backend == Chosen.Backend && model.BaseUrl == Chosen.BaseUrl;
-            rows.Add(new SelectOption(model.Id, model.Backend + " · cloud · ctx " + Number(model.ContextWindow), current));
+            rows.Add(new SelectOption(model.Id, ModelLabels.PickerHint(model), current));
         }
         int? index = await ui.SelectAsync("Select model", rows, lifetime.Token);
         if (!index.HasValue)
         {
             return;
         }
+        await ApplyModelAsync(models[index.Value]);
+    }
 
+    /// <summary>
+    /// Switches the session to a model: works out its window, swaps the provider, remembers the choice.
+    /// </summary>
+    public async Task ApplyModelAsync(ModelDescriptor model)
+    {
         ModelDescriptor next;
-        ui.StartSpinner("loading " + models[index.Value].Id);
+        string memory = model.Backend == Backends.Ollama ? " into memory" : string.Empty;
+        ui.StartSpinner("loading " + model.Id + memory);
         try
         {
-            next = await modelCatalog.ResolveContextWindowAsync(models[index.Value], preferences.ContextWindow, lifetime.Token);
+            next = await modelCatalog.ResolveContextWindowAsync(model, preferences.ContextWindow, lifetime.Token);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (!(exception is OperationCanceledException))
         {
             ui.Error(exception.Message);
             return;
@@ -494,22 +516,23 @@ public sealed class InteractiveSession
             ui.StopSpinner();
         }
 
+        IModelProvider provider;
+        try
+        {
+            provider = modelCatalog.CreateProvider(next);
+        }
+        catch (InvalidOperationException exception)
+        {
+            ui.Error(exception.Message);
+            return;
+        }
         Chosen = next;
-        IModelProvider provider = modelCatalog.CreateProvider(next);
         provider.SetEffort(Effort);
         parts.Agent.SetProvider(provider);
         parts.ContextManager.SetWindow(next.ContextWindow, provider.MaxOutputTokens);
         Persist();
-        ui.PrintLine("● " + next.Backend + " · " + next.Id + " · ctx " + Number(next.ContextWindow) + " · " + PermissionModes.Label(parts.Agent.Mode) + " mode");
-        if (next.Note != null)
-        {
-            ui.Warn("  " + next.Note);
-        }
-        string? advice = EffortAdvice();
-        if (advice != null)
-        {
-            ui.Warn("  " + advice);
-        }
+        ui.PrintLine("● " + ModelLabels.BackendLabel(next) + " · " + next.Id + " · ctx " + Number(next.ContextWindow) + " · " + PermissionModes.Label(parts.Agent.Mode) + " mode");
+        Announce();
     }
 
     private async Task SetModeAsync(string? argument)
@@ -581,20 +604,11 @@ public sealed class InteractiveSession
             label = Efforts.Name(next);
         }
         ui.Status("· effort " + label);
-        string? advice = EffortAdvice();
+        string? advice = ModelAdvice.Effort(Chosen, Effort, false);
         if (advice != null)
         {
             ui.Warn("  " + advice);
         }
-    }
-
-    private string? EffortAdvice()
-    {
-        if (Chosen.Backend == "deepseek" && Effort != Domain.Modes.Effort.Off)
-        {
-            return "DeepSeek thinks before every tool call and bills those tokens as output. /effort off is cheapest for long tool loops.";
-        }
-        return null;
     }
 
     private void Persist()

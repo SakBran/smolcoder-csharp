@@ -75,7 +75,7 @@ public sealed class HeadlessRunner
             {
                 try
                 {
-                    ui.PrintLine("● " + BackendLabel(chosen) + " · " + chosen.Id + " · ctx " + chosen.ContextWindow.ToString("N0") + " · " + PermissionModes.Label(mode) + " mode");
+                    ui.PrintLine("● " + ModelLabels.BackendLabel(chosen) + " · " + chosen.Id + " · ctx " + chosen.ContextWindow.ToString("N0") + " · " + PermissionModes.Label(mode) + " mode");
                     if (chosen.Note != null)
                     {
                         ui.Warn("  " + chosen.Note);
@@ -86,9 +86,10 @@ public sealed class HeadlessRunner
                         effortLabel = Efforts.Name(effort);
                     }
                     ui.Status("  effort " + effortLabel);
-                    if (effort != Effort.Off)
+                    string? advice = ModelAdvice.Effort(chosen, effort, true);
+                    if (advice != null)
                     {
-                        ui.Warn("  DeepSeek thinks before every tool call and bills those tokens as output. --effort off is cheapest for long tool loops.");
+                        ui.Warn("  " + advice);
                     }
 
                     int exitCode = 0;
@@ -205,14 +206,5 @@ public sealed class HeadlessRunner
             }
             return Task.CompletedTask;
         });
-    }
-
-    private static string BackendLabel(ModelDescriptor model)
-    {
-        if (model.Host != null)
-        {
-            return model.Backend + " @ " + model.Host;
-        }
-        return model.Backend;
     }
 }
