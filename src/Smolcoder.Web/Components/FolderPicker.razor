@@ -1,0 +1,91 @@
+@inject IWorkspaceBrowser Browser
+
+<div class="modal-backdrop" @onclick="OnCancel">
+    <div class="modal" @onclick:stopPropagation="true">
+        <div class="modal-head">Open a folder</div>
+        <div class="modal-path">
+            @if (listing != null && listing.Parent != null)
+            {
+                <button class="icon-button" title="Up" @onclick="() => Load(listing.Parent)">↑</button>
+            }
+            <input @bind="typedPath" @onkeydown="TypedKey" />
+            <button class="icon-button" @onclick="() => Load(typedPath)">Go</button>
+        </div>
+        <div class="modal-list">
+            @if (listing != null)
+            {
+                @if (listing.Problem != null)
+                {
+                    <div class="line error">@listing.Problem</div>
+                }
+                @foreach (FolderChoice folder in listing.Folders)
+                {
+                    <button @onclick="() => Load(folder.Path)">
+                        <span style="color: var(--yellow)">▣</span>
+                        <span style="flex:1">@folder.Name</span>
+                        @if (folder.IsProject)
+                        {
+                            <span class="project">project</span>
+                        }
+                    </button>
+                }
+            }
+        </div>
+        <div class="modal-foot">
+            <label><input type="checkbox" @bind="startSession" /> start a session</label>
+            <span class="spacer"></span>
+            <button class="button" @onclick="OnCancel">Cancel</button>
+            <button class="button primary" @onclick="ChooseAsync">Open @Display()</button>
+        </div>
+    </div>
+</div>
+
+@code
+{
+    private FolderListing? listing;
+    private string typedPath = string.Empty;
+    private bool startSession = true;
+
+    [Parameter]
+    public EventCallback<FolderPick> OnPicked { get; set; }
+
+    [Parameter]
+    public EventCallback OnCancel { get; set; }
+
+    protected override void OnInitialized()
+    {
+        Load(null);
+    }
+
+    private void Load(string? path)
+    {
+        listing = Browser.BrowseFolders(path);
+        typedPath = listing.Path;
+    }
+
+    private void TypedKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            Load(typedPath);
+        }
+    }
+
+    private string Display()
+    {
+        if (listing == null)
+        {
+            return string.Empty;
+        }
+        return listing.Display;
+    }
+
+    private async Task ChooseAsync()
+    {
+        if (listing == null || listing.Problem != null)
+        {
+            return;
+        }
+        await OnPicked.InvokeAsync(new FolderPick(listing.Path, startSession));
+    }
+}

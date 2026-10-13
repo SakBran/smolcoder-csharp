@@ -1,0 +1,257 @@
+@implements IAsyncDisposable
+@inject IWorkspaceBrowser Browser
+@inject IJSRuntime JS
+
+<div class="files">
+    <div class="tree">
+        @foreach (FileEntry entry in Children(string.Empty))
+        {
+            @RenderNode(entry, 0)
+        }
+    </div>
+    <div class="viewer">
+        <div class="viewer-head">
+            <span class="path">@ViewerTitle()</span>
+            <button class="icon-button" title="Reload" @onclick="ReloadAsync">⟳</button>
+        </div>
+        @if (problem != null)
+        {
+            <div class="problem">@problem</div>
+        }
+        <div class="monaco" @ref="editorElement"></div>
+    </div>
+</div>
+
+@code
+{
+    private readonly Dictionary<string, IReadOnlyList<FileEntry>> loaded = new Dictionary<string, IReadOnlyList<FileEntry>>();
+    private readonly HashSet<string> expanded = new HashSet<string>();
+    private ElementReference editorElement;
+    private string? selectedPath;
+    private string? problem;
+    private DateTime? shownWriteTime;
+    private string? boundSessionId;
+    private int seenTouchedCount;
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Session != null && boundSessionId != Session.Id)
+        {
+            boundSessionId = Session.Id;
+            loaded.Clear();
+            expanded.Clear();
+            selectedPath = null;
+            problem = null;
+            shownWriteTime = null;
+            seenTouchedCount = 0;
+        }
+        // The agent created or changed files: list the folders again.
+        int touched = TouchedCount();
+        if (touched != seenTouchedCount)
+        {
+            seenTouchedCount = touched;
+            loaded.Clear();
+        }
+    }
+
+    private int TouchedCount()
+    {
+        if (Session == null || Session.Session == null)
+        {
+            return 0;
+        }
+        return Session.Session.Parts.ToolContext.FilesTouched.Count + Session.Session.Parts.ToolContext.CommandsRun.Count;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // The agent may have rewritten the open file. Reload it when its time stamp moved.
+        if (Session == null || selectedPath == null)
+        {
+            return;
+        }
+        DateTime? current = Browser.LastWriteUtc(Session.Meta.WorkspacePath, selectedPath);
+        if (current.HasValue && current != shownWriteTime)
+        {
+            await ShowFileAsync(selectedPath);
+        }
+    }
+
+    private RenderFragment RenderNode(FileEntry entry, int depth)
+    {
+        return builder =>
+        {
+            int sequence = 0;
+            builder.OpenElement(sequence++, "div");
+            builder.AddAttribute(sequence++, "class", NodeClass(entry));
+            builder.AddAttribute(sequence++, "style", "padding-left: " + (6 + depth * 14) + "px");
+            builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => ClickAsync(entry)));
+            builder.OpenElement(sequence++, "span");
+            builder.AddAttribute(sequence++, "class", "twisty");
+            builder.AddContent(sequence++, Twisty(entry));
+            builder.CloseElement();
+            if (entry.IsDirectory)
+            {
+                builder.OpenElement(sequence++, "span");
+                builder.AddAttribute(sequence++, "class", "folder");
+                builder.AddContent(sequence++, "▣");
+                builder.CloseElement();
+            }
+            builder.OpenElement(sequence++, "span");
+            builder.AddAttribute(sequence++, "class", "label");
+            builder.AddContent(sequence++, entry.Name);
+            builder.CloseElement();
+            builder.CloseElement();
+            if (entry.IsDirectory && expanded.Contains(entry.RelativePath))
+            {
+                foreach (FileEntry child in Children(entry.RelativePath))
+                {
+                    builder.AddContent(sequence++, RenderNode(child, depth + 1));
+                }
+            }
+        };
+    }
+
+    private IReadOnlyList<FileEntry> Children(string relativePath)
+    {
+        if (Session == null)
+        {
+            return new List<FileEntry>();
+        }
+        IReadOnlyList<FileEntry>? entries;
+        if (!loaded.TryGetValue(relativePath, out entries))
+        {
+            try
+            {
+                entries = Browser.ListDirectory(Session.Meta.WorkspacePath, relativePath);
+            }
+            catch (Exception)
+            {
+                entries = new List<FileEntry>();
+            }
+            loaded[relativePath] = entries;
+        }
+        return entries;
+    }
+
+    private async Task ClickAsync(FileEntry entry)
+    {
+        if (entry.IsDirectory)
+        {
+            if (expanded.Contains(entry.RelativePath))
+            {
+                expanded.Remove(entry.RelativePath);
+            }
+            else
+            {
+                loaded.Remove(entry.RelativePath);
+                expanded.Add(entry.RelativePath);
+            }
+            return;
+        }
+        await ShowFileAsync(entry.RelativePath);
+    }
+
+    private async Task ReloadAsync()
+    {
+        loaded.Clear();
+        if (selectedPath != null)
+        {
+            await ShowFileAsync(selectedPath);
+        }
+    }
+
+    private async Task ShowFileAsync(string relativePath)
+    {
+        if (Session == null)
+        {
+            return;
+        }
+        selectedPath = relativePath;
+        FileView view = Browser.ReadForView(Session.Meta.WorkspacePath, relativePath);
+        shownWriteTime = view.LastWriteUtc;
+        problem = view.Problem;
+        string content = string.Empty;
+        if (view.Content != null)
+        {
+            content = view.Content;
+        }
+        await JS.InvokeVoidAsync("smol.showFile", editorElement, relativePath, content, null);
+        StateHasChanged();
+    }
+
+    private string NodeClass(FileEntry entry)
+    {
+        string css = "tree-node";
+        if (entry.RelativePath == selectedPath)
+        {
+            css = css + " selected";
+        }
+        if (IsTouched(entry.RelativePath))
+        {
+            css = css + " touched";
+        }
+        return css;
+    }
+
+    /// <summary>
+    /// Files the agent created or changed in this session are marked in the tree.
+    /// </summary>
+    private bool IsTouched(string relativePath)
+    {
+        if (Session == null || Session.Session == null)
+        {
+            return false;
+        }
+        foreach (string touched in Session.Session.Parts.ToolContext.FilesTouched.ToList())
+        {
+            string normalized = touched.Replace('\\', '/');
+            if (normalized.StartsWith("./", StringComparison.Ordinal))
+            {
+                normalized = normalized.Substring(2);
+            }
+            if (normalized == relativePath)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private string Twisty(FileEntry entry)
+    {
+        if (!entry.IsDirectory)
+        {
+            return string.Empty;
+        }
+        if (expanded.Contains(entry.RelativePath))
+        {
+            return "▾";
+        }
+        return "▸";
+    }
+
+    private string ViewerTitle()
+    {
+        if (selectedPath == null)
+        {
+            return "Pick a file to view it";
+        }
+        return selectedPath;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("smol.disposeEditor", editorElement);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The page is gone.
+        }
+    }
+}

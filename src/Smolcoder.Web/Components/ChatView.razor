@@ -1,0 +1,98 @@
+@inject IJSRuntime JS
+
+<main class="chat">
+    <div class="chat-head">
+        <button class="icon-button" title="Sidebar (Ctrl+B)" @onclick="OnToggleSidebar">☰</button>
+        <span class="title">@HeadTitle()</span>
+        <button class="icon-button" title="Files, terminal and browser" @onclick="OnTogglePanel">◫</button>
+    </div>
+
+    <div class="transcript" @ref="transcript">
+        @if (Session == null)
+        {
+            <div class="empty">
+                <div class="big">smolcoder</div>
+                Open a folder on the left, or pick a session.<br />
+                Myanmar and every other script are shown correctly here — try typing မင်္ဂလာပါ.
+            </div>
+        }
+        else
+        {
+            @foreach (UiEvent item in rows)
+            {
+                <ChatRow Item="item" SessionId="@Session.Id" OnAnswer="AnswerAsync" />
+            }
+        }
+    </div>
+
+    @if (Session != null)
+    {
+        <Composer Session="Session" OnError="OnError" />
+        <StatusBar Session="Session" />
+    }
+</main>
+
+@code
+{
+    private ElementReference transcript;
+    private List<UiEvent> rows = new List<UiEvent>();
+    private string? lastSessionId;
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    [Parameter]
+    public EventCallback OnToggleSidebar { get; set; }
+
+    [Parameter]
+    public EventCallback OnTogglePanel { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnError { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Session != null)
+        {
+            rows = Session.Channel.EventsSnapshot();
+        }
+        else
+        {
+            rows = new List<UiEvent>();
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Session == null)
+        {
+            return;
+        }
+        bool switched = lastSessionId != Session.Id;
+        lastSessionId = Session.Id;
+        await JS.InvokeVoidAsync("smol.highlight", transcript);
+        await JS.InvokeVoidAsync("smol.scrollToBottom", transcript, switched);
+    }
+
+    private string HeadTitle()
+    {
+        if (Session == null)
+        {
+            return "No session";
+        }
+        if (Session.Meta.Title.Length > 0)
+        {
+            return Session.Meta.Title;
+        }
+        return "New session · " + Session.Meta.WorkspacePath;
+    }
+
+    private Task AnswerAsync(AnswerRequest request)
+    {
+        if (Session != null)
+        {
+            Session.Channel.Answer(request.AskId, request.Answer, request.Index);
+        }
+        return Task.CompletedTask;
+    }
+}

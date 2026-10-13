@@ -1,0 +1,62 @@
+@if (Session != null)
+{
+    SessionState? state = Session.State();
+<div class="statusbar">
+    @if (state != null)
+    {
+        <button class="mode @state.Mode" title="Cycle mode (Shift+Tab)" @onclick="Session.CycleMode">@PermissionModes.Label(state.Mode)</button>
+        <span>@state.Model <span style="color: var(--text-faint)">@BackendText(state)</span></span>
+        <span style="color: var(--yellow)">effort @state.EffortLabel</span>
+        <span title="@ContextTitle(state)">ctx <span class="meter"><span style="width: @(state.ContextPercent)%"></span></span> @state.ContextPercent%</span>
+        @if (state.PlanSteps.Count > 0)
+        {
+            <span style="color: var(--cyan)">plan @state.PlanSteps.Count(step => step.Done)/@state.PlanSteps.Count</span>
+        }
+        @if (state.RunningTasks > 0)
+        {
+            <span style="color: var(--green)">@state.RunningTasks background @TaskWord(state.RunningTasks)</span>
+        }
+    }
+    else if (Session.StartError != null)
+    {
+        <span style="color: var(--red)">not started</span>
+    }
+    else
+    {
+        <span>starting…</span>
+    }
+    @if (Session.Channel.BusyLabel != null)
+    {
+        <span class="busy">● @Session.Channel.BusyLabel…</span>
+    }
+</div>
+}
+
+@code
+{
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    private static string BackendText(SessionState state)
+    {
+        if (state.Host != null)
+        {
+            return state.Backend + " @ " + state.Host;
+        }
+        return state.Backend;
+    }
+
+    private static string ContextTitle(SessionState state)
+    {
+        return state.Context.Prompt.ToString("N0") + " / " + state.Context.Window.ToString("N0") + " tokens (" + state.Context.Source + ")";
+    }
+
+    private static string TaskWord(int count)
+    {
+        if (count == 1)
+        {
+            return "task";
+        }
+        return "tasks";
+    }
+}

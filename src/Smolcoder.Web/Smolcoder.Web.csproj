@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Smolcoder.Application\Smolcoder.Application.csproj" />
+    <ProjectReference Include="..\Smolcoder.Infrastructure\Smolcoder.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

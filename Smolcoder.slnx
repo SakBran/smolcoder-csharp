@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Smolcoder.Application/Smolcoder.Application.csproj" />
+    <Project Path="src/Smolcoder.Cli/Smolcoder.Cli.csproj" />
+    <Project Path="src/Smolcoder.Domain/Smolcoder.Domain.csproj" />
+    <Project Path="src/Smolcoder.Infrastructure/Smolcoder.Infrastructure.csproj" />
+    <Project Path="src/Smolcoder.Web/Smolcoder.Web.csproj" />
+  </Folder>
+</Solution>

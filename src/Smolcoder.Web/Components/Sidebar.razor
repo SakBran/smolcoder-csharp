@@ -1,0 +1,145 @@
+<aside class="sidebar">
+    <div class="brand">
+        <span class="smol">smol</span><span class="coder">coder</span>
+        <span class="version">v@(Version)</span>
+    </div>
+    <div class="sidebar-actions">
+        <button class="button wide" @onclick="OnAddFolder">+ Open a folder</button>
+    </div>
+    <div class="sidebar-scroll">
+        @foreach (WorkspaceView workspace in Workspaces)
+        {
+            <div class="workspace">
+                <div class="workspace-head" title="@workspace.Path">
+                    <span class="name">@workspace.Name</span>
+                    <button class="icon-button" title="New session in this folder" @onclick="() => OnNewSession.InvokeAsync(workspace.Path)">+</button>
+                    <button class="icon-button" title="Remove from the list" @onclick="() => OnRemoveWorkspace.InvokeAsync(workspace.Path)">×</button>
+                </div>
+                @foreach (SessionView session in workspace.Sessions)
+                {
+                    <div class="@RowClass(session)" @onclick="() => OnSelect.InvokeAsync(session.Id)" @ondblclick="() => StartRename(session)">
+                        <span class="@DotClass(session)"></span>
+                        @if (renamingId == session.Id)
+                        {
+                            <input class="rename-input" @bind="renameText" @onkeydown="RenameKeyAsync" @onblur="FinishRenameAsync" @onclick:stopPropagation="true" />
+                        }
+                        else
+                        {
+                            <span class="title" title="@session.Title">@session.Title</span>
+                        }
+                        <button class="close" title="@CloseTitle(session)" @onclick="() => OnClose.InvokeAsync(session)" @onclick:stopPropagation="true">×</button>
+                    </div>
+                }
+            </div>
+        }
+        @if (Workspaces.Count == 0)
+        {
+            <div class="empty">Open a folder to start.</div>
+        }
+    </div>
+</aside>
+
+@code
+{
+    private string? renamingId;
+    private string renameText = string.Empty;
+
+    [Parameter]
+    public List<WorkspaceView> Workspaces { get; set; } = new List<WorkspaceView>();
+
+    [Parameter]
+    public string? SelectedId { get; set; }
+
+    [Parameter]
+    public string Version { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> OnSelect { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnNewSession { get; set; }
+
+    [Parameter]
+    public EventCallback<SessionView> OnClose { get; set; }
+
+    [Parameter]
+    public EventCallback<RenameRequest> OnRename { get; set; }
+
+    [Parameter]
+    public EventCallback OnAddFolder { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnRemoveWorkspace { get; set; }
+
+    private string RowClass(SessionView session)
+    {
+        if (session.Id == SelectedId)
+        {
+            return "session-row active";
+        }
+        return "session-row";
+    }
+
+    private static string DotClass(SessionView session)
+    {
+        if (session.Status == SessionStatus.Idle)
+        {
+            return "dot idle";
+        }
+        if (session.Status == SessionStatus.Busy)
+        {
+            return "dot busy";
+        }
+        if (session.Status == SessionStatus.Waiting)
+        {
+            return "dot waiting";
+        }
+        if (session.Status == SessionStatus.Error)
+        {
+            return "dot error";
+        }
+        if (session.Status == SessionStatus.Starting)
+        {
+            return "dot starting";
+        }
+        return "dot";
+    }
+
+    private static string CloseTitle(SessionView session)
+    {
+        if (session.IsLive)
+        {
+            return "Close (stays saved)";
+        }
+        return "Delete";
+    }
+
+    private void StartRename(SessionView session)
+    {
+        renamingId = session.Id;
+        renameText = session.Title;
+    }
+
+    private async Task RenameKeyAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await FinishRenameAsync();
+        }
+        else if (args.Key == "Escape")
+        {
+            renamingId = null;
+        }
+    }
+
+    private async Task FinishRenameAsync()
+    {
+        if (renamingId == null)
+        {
+            return;
+        }
+        string id = renamingId;
+        renamingId = null;
+        await OnRename.InvokeAsync(new RenameRequest(id, renameText));
+    }
+}

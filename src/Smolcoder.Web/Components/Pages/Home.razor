@@ -1,0 +1,311 @@
+@page "/"
+@implements IDisposable
+@inject SessionHub Hub
+@inject HubOptions Options
+@inject IJSRuntime JS
+
+<PageTitle>@PageTitleText()</PageTitle>
+
+<div class="@AppClass()">
+    <Sidebar Workspaces="workspaces"
+             SelectedId="@selectedId"
+             Version="@Options.Version"
+             OnSelect="SelectAsync"
+             OnNewSession="NewSessionAsync"
+             OnClose="CloseOrDeleteAsync"
+             OnRename="RenameAsync"
+             OnAddFolder="ShowFolderPicker"
+             OnRemoveWorkspace="RemoveWorkspaceAsync" />
+
+    <ChatView Session="selected"
+              OnToggleSidebar="ToggleSidebar"
+              OnTogglePanel="TogglePanel"
+              OnError="ShowError" />
+
+    @if (panelVisible)
+    {
+        <RightPanel @ref="rightPanel" Session="selected" HubPort="@Options.Port" />
+    }
+    else
+    {
+        <div></div>
+    }
+</div>
+
+@if (folderPickerVisible)
+{
+    <FolderPicker OnPicked="FolderPickedAsync" OnCancel="HideFolderPicker" />
+}
+
+@if (errorText != null)
+{
+    <div class="toast" @onclick="ClearError">@errorText</div>
+}
+
+@code
+{
+    private List<WorkspaceView> workspaces = new List<WorkspaceView>();
+    private string? selectedId;
+    private LiveSession? selected;
+    private bool sidebarVisible = true;
+    private bool panelVisible = true;
+    private bool folderPickerVisible;
+    private string? errorText;
+    private RightPanel? rightPanel;
+    private DotNetObjectReference<Home>? selfReference;
+
+    protected override void OnInitialized()
+    {
+        workspaces = Hub.Sidebar();
+        Hub.Changed += OnHubChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+        selfReference = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("smol.bindGlobalKeys", selfReference);
+        string hash = await JS.InvokeAsync<string>("smol.initialHash");
+        if (hash.Length > 0)
+        {
+            await SelectAsync(hash);
+        }
+        else
+        {
+            SessionView? newest = workspaces.SelectMany(workspace => workspace.Sessions).Where(session => session.IsLive).FirstOrDefault();
+            if (newest != null)
+            {
+                await SelectAsync(newest.Id);
+            }
+        }
+    }
+
+    [JSInvokable]
+    public Task ToggleSidebar()
+    {
+        sidebarVisible = !sidebarVisible;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public Task ToggleTerminal()
+    {
+        panelVisible = true;
+        if (rightPanel != null)
+        {
+            rightPanel.ShowTerminal();
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void TogglePanel()
+    {
+        panelVisible = !panelVisible;
+    }
+
+    private string AppClass()
+    {
+        string css = "app";
+        if (!sidebarVisible)
+        {
+            css = css + " sidebar-hidden";
+        }
+        if (!panelVisible)
+        {
+            css = css + " panel-hidden";
+        }
+        return css;
+    }
+
+    private string PageTitleText()
+    {
+        if (selected != null && selected.Meta.Title.Length > 0)
+        {
+            return selected.Meta.Title + " · smolcoder";
+        }
+        return "smolcoder";
+    }
+
+    private async Task SelectAsync(string sessionId)
+    {
+        try
+        {
+            LiveSession? session = Hub.Find(sessionId);
+            if (session == null || !session.IsRunning)
+            {
+                await Hub.ResumeAsync(sessionId);
+                session = Hub.Find(sessionId);
+            }
+            Watch(session);
+            selectedId = sessionId;
+            await JS.InvokeVoidAsync("smol.setHash", sessionId);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+        StateHasChanged();
+    }
+
+    private async Task NewSessionAsync(string workspacePath)
+    {
+        try
+        {
+            string id = await Hub.OpenSessionAsync(workspacePath);
+            await SelectAsync(id);
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+    }
+
+    private async Task CloseOrDeleteAsync(SessionView session)
+    {
+        try
+        {
+            if (session.IsLive)
+            {
+                await Hub.CloseAsync(session.Id);
+            }
+            else
+            {
+                bool confirmed = await JS.InvokeAsync<bool>("smol.confirmDialog", "Delete the saved session \"" + session.Title + "\"?");
+                if (!confirmed)
+                {
+                    return;
+                }
+                await Hub.DeleteAsync(session.Id);
+            }
+            if (selectedId == session.Id && !session.IsLive)
+            {
+                Watch(null);
+                selectedId = null;
+            }
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+    }
+
+    private async Task RenameAsync(RenameRequest request)
+    {
+        await Hub.RenameAsync(request.SessionId, request.Title);
+    }
+
+    private async Task RemoveWorkspaceAsync(string path)
+    {
+        try
+        {
+            bool confirmed = await JS.InvokeAsync<bool>("smol.confirmDialog", "Remove this workspace and its saved sessions from the list? Files on disk are not touched.");
+            if (confirmed)
+            {
+                await Hub.RemoveWorkspaceAsync(path);
+            }
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+    }
+
+    private void ShowFolderPicker()
+    {
+        folderPickerVisible = true;
+    }
+
+    private void HideFolderPicker()
+    {
+        folderPickerVisible = false;
+    }
+
+    private async Task FolderPickedAsync(FolderPick pick)
+    {
+        folderPickerVisible = false;
+        try
+        {
+            if (pick.StartSession)
+            {
+                await NewSessionAsync(pick.Path);
+            }
+            else
+            {
+                await Hub.AddWorkspaceAsync(pick.Path);
+            }
+        }
+        catch (Exception exception)
+        {
+            ShowError(exception.Message);
+        }
+    }
+
+    private void ShowError(string message)
+    {
+        errorText = message;
+        _ = ClearErrorLaterAsync(message);
+    }
+
+    private async Task ClearErrorLaterAsync(string message)
+    {
+        await Task.Delay(6000);
+        if (errorText == message)
+        {
+            errorText = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ClearError()
+    {
+        errorText = null;
+    }
+
+    private void Watch(LiveSession? session)
+    {
+        if (selected != null)
+        {
+            selected.Changed -= OnSessionChanged;
+        }
+        selected = session;
+        if (selected != null)
+        {
+            selected.Changed += OnSessionChanged;
+        }
+    }
+
+    private void OnHubChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            workspaces = Hub.Sidebar();
+            if (selectedId != null)
+            {
+                LiveSession? current = Hub.Find(selectedId);
+                if (current != selected)
+                {
+                    Watch(current);
+                }
+            }
+            StateHasChanged();
+        });
+    }
+
+    private void OnSessionChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Hub.Changed -= OnHubChanged;
+        Watch(null);
+        if (selfReference != null)
+        {
+            selfReference.Dispose();
+        }
+    }
+}

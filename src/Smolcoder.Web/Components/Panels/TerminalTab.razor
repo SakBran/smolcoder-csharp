@@ -1,0 +1,167 @@
+@implements IDisposable
+@inject IJSRuntime JS
+
+@{
+    TerminalView? active = Active();
+}
+<div class="terminal">
+    <div class="terminal-tabs">
+        @foreach (TerminalView view in Views())
+        {
+            <button class="@TermClass(view)" @onclick="() => Select(view)">@view.Id</button>
+        }
+        <button class="icon-button" title="New terminal" @onclick="Open">+</button>
+        @if (active != null)
+        {
+            <span style="flex:1"></span>
+            <button class="icon-button" title="Interrupt (Ctrl+C)" @onclick="Interrupt">^C</button>
+            <button class="icon-button" title="Close terminal" @onclick="CloseActive">×</button>
+        }
+    </div>
+    @if (active != null)
+    {
+        <pre class="terminal-output" @ref="outputElement">@((MarkupString)AnsiToHtml.Convert(active.Output))</pre>
+        <div class="terminal-input">
+            <span class="prompt">❯</span>
+            <input @ref="inputElement" placeholder="@PromptPlaceholder()" spellcheck="false" />
+        </div>
+    }
+    else
+    {
+        <div class="browser"><div class="hint">No terminal yet. Press + to open one in the workspace.<br />It runs one command at a time; interactive programs (vim, top) do not work here.</div></div>
+    }
+</div>
+
+@code
+{
+    private ElementReference outputElement;
+    private ElementReference inputElement;
+    private string? activeId;
+    private DotNetObjectReference<TerminalTab>? selfReference;
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Active() == null)
+        {
+            return;
+        }
+        if (selfReference == null)
+        {
+            selfReference = DotNetObjectReference.Create(this);
+        }
+        await JS.InvokeVoidAsync("smol.bindTerminalInput", inputElement, selfReference);
+        await JS.InvokeVoidAsync("smol.scrollToBottom", outputElement, false);
+    }
+
+    [JSInvokable]
+    public Task RunLine(string line)
+    {
+        TerminalView? view = Active();
+        if (view != null)
+        {
+            view.Write(line);
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task Interrupt()
+    {
+        TerminalView? view = Active();
+        if (view != null)
+        {
+            view.Interrupt();
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task ClearOutput()
+    {
+        TerminalView? view = Active();
+        if (view != null)
+        {
+            view.Clear();
+        }
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private IReadOnlyList<TerminalView> Views()
+    {
+        if (Session == null)
+        {
+            return new List<TerminalView>();
+        }
+        return Session.Terminals();
+    }
+
+    private TerminalView? Active()
+    {
+        if (Session == null)
+        {
+            return null;
+        }
+        IReadOnlyList<TerminalView> views = Session.Terminals();
+        TerminalView? match = views.FirstOrDefault(view => view.Id == activeId);
+        if (match == null)
+        {
+            match = views.LastOrDefault();
+        }
+        return match;
+    }
+
+    private void Open()
+    {
+        if (Session != null)
+        {
+            TerminalView view = Session.OpenTerminal();
+            activeId = view.Id;
+        }
+    }
+
+    private void Select(TerminalView view)
+    {
+        activeId = view.Id;
+    }
+
+    private void CloseActive()
+    {
+        TerminalView? view = Active();
+        if (view != null && Session != null)
+        {
+            Session.CloseTerminal(view.Id);
+            activeId = null;
+        }
+    }
+
+    private string TermClass(TerminalView view)
+    {
+        TerminalView? active = Active();
+        if (active != null && active.Id == view.Id)
+        {
+            return "button primary";
+        }
+        return "button";
+    }
+
+    private string PromptPlaceholder()
+    {
+        TerminalView? view = Active();
+        if (view == null)
+        {
+            return string.Empty;
+        }
+        return view.WorkingDirectory;
+    }
+
+    public void Dispose()
+    {
+        if (selfReference != null)
+        {
+            selfReference.Dispose();
+        }
+    }
+}

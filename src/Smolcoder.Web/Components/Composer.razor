@@ -1,0 +1,261 @@
+@implements IDisposable
+@inject IJSRuntime JS
+@inject Smolcoder.Application.Abstractions.Persistence.IAttachmentStore AttachmentStore
+
+<div class="composer" @ref="dropZone">
+    @if (SlashMatches().Count > 0)
+    {
+        <div class="slash-menu">
+            @foreach (SlashCommand command in SlashMatches())
+            {
+                <button @onclick="() => ChooseCommandAsync(command)">
+                    <span class="command">/@command.Name</span>
+                    <span class="description">@command.Description</span>
+                </button>
+            }
+        </div>
+    }
+    <textarea @ref="textarea" rows="1" placeholder="Ask smolcoder to do something…  (/ for commands, paste or drop files)"></textarea>
+    <div class="composer-bar">
+        <button class="icon-button" title="Attach files" @onclick="PickFilesAsync">📎</button>
+        <input type="file" multiple style="display:none" @ref="fileInput" />
+        @foreach (PendingAttachment attachment in pending)
+        {
+            <span class="chip">
+                @if (attachment.IsImage)
+                {
+                    <img src="@UploadUrl(attachment.Id)" alt="" />
+                }
+                @attachment.Name
+                <button title="Remove" @onclick="() => RemoveAttachment(attachment)">×</button>
+            </span>
+        }
+        <span class="spacer"></span>
+        @if (IsBusy())
+        {
+            <button class="button danger" title="Stop (Esc)" @onclick="StopTurn">■ Stop</button>
+        }
+        else
+        {
+            <button class="button primary" @onclick="SendButtonAsync">Send</button>
+        }
+    </div>
+</div>
+
+@code
+{
+    private ElementReference textarea;
+    private ElementReference dropZone;
+    private ElementReference fileInput;
+    private DotNetObjectReference<Composer>? selfReference;
+    private readonly List<PendingAttachment> pending = new List<PendingAttachment>();
+    private string currentText = string.Empty;
+    private string? boundSessionId;
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    [Parameter]
+    public EventCallback<string> OnError { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        if (Session != null && boundSessionId != Session.Id)
+        {
+            boundSessionId = Session.Id;
+            pending.Clear();
+            currentText = string.Empty;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            selfReference = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("smol.bindComposer", textarea, dropZone, selfReference);
+            await JS.InvokeVoidAsync("smol.focus", textarea);
+        }
+    }
+
+    [JSInvokable]
+    public string? CurrentSessionId()
+    {
+        if (Session == null)
+        {
+            return null;
+        }
+        return Session.Id;
+    }
+
+    [JSInvokable]
+    public Task SendFromKeyboard(string text)
+    {
+        return InvokeAsync(() => SendAsync(text));
+    }
+
+    [JSInvokable]
+    public Task TextChanged(string text)
+    {
+        return InvokeAsync(() =>
+        {
+            bool menuBefore = SlashMatches().Count > 0;
+            currentText = text;
+            bool menuAfter = SlashMatches().Count > 0;
+            if (menuBefore || menuAfter)
+            {
+                StateHasChanged();
+            }
+        });
+    }
+
+    [JSInvokable]
+    public Task CycleMode()
+    {
+        if (Session != null)
+        {
+            Session.CycleMode();
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task StopTurn()
+    {
+        if (Session != null)
+        {
+            Session.Cancel();
+        }
+        return Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task Uploaded(string id, string name, bool isImage, long size, string? warning)
+    {
+        return InvokeAsync(async () =>
+        {
+            PendingAttachment attachment = new PendingAttachment(id, name, isImage);
+            pending.Add(attachment);
+            if (warning != null)
+            {
+                await OnError.InvokeAsync(warning);
+            }
+            StateHasChanged();
+        });
+    }
+
+    [JSInvokable]
+    public Task UploadFailed(string message)
+    {
+        return InvokeAsync(() => OnError.InvokeAsync(message));
+    }
+
+    private async Task SendButtonAsync()
+    {
+        string text = currentText;
+        await JS.InvokeVoidAsync("smol.setComposerText", textarea, string.Empty);
+        await SendAsync(text);
+    }
+
+    private async Task SendAsync(string text)
+    {
+        if (Session == null)
+        {
+            return;
+        }
+        List<Smolcoder.Domain.Attachments.Attachment> attachments = new List<Smolcoder.Domain.Attachments.Attachment>();
+        foreach (PendingAttachment item in pending)
+        {
+            Smolcoder.Domain.Attachments.Attachment? found = AttachmentStore.Find(Session.Id, item.Id);
+            if (found == null)
+            {
+                await OnError.InvokeAsync("An attachment is no longer available — add it again.");
+                return;
+            }
+            attachments.Add(found);
+        }
+        if (Session.Send(text, attachments))
+        {
+            pending.Clear();
+            currentText = string.Empty;
+        }
+        StateHasChanged();
+    }
+
+    private async Task ChooseCommandAsync(SlashCommand command)
+    {
+        currentText = "/" + command.Name + " ";
+        await JS.InvokeVoidAsync("smol.setComposerText", textarea, currentText);
+    }
+
+    private List<SlashCommand> SlashMatches()
+    {
+        if (!currentText.StartsWith("/", StringComparison.Ordinal) || currentText.Contains(' '))
+        {
+            return new List<SlashCommand>();
+        }
+        string typed = currentText.Substring(1).ToLowerInvariant();
+        return InteractiveSession.SlashCommands.Where(command => command.Name.StartsWith(typed, StringComparison.Ordinal)).ToList();
+    }
+
+    private async Task PickFilesAsync()
+    {
+        if (selfReference != null)
+        {
+            await JS.InvokeVoidAsync("smol.pickFiles", fileInput, selfReference);
+        }
+    }
+
+    private void RemoveAttachment(PendingAttachment attachment)
+    {
+        pending.Remove(attachment);
+        if (Session != null)
+        {
+            AttachmentStore.Remove(Session.Id, attachment.Id);
+        }
+    }
+
+    private string UploadUrl(string id)
+    {
+        string sessionId = string.Empty;
+        if (Session != null)
+        {
+            sessionId = Session.Id;
+        }
+        return "/api/upload?sid=" + Uri.EscapeDataString(sessionId) + "&id=" + Uri.EscapeDataString(id);
+    }
+
+    private bool IsBusy()
+    {
+        if (Session == null)
+        {
+            return false;
+        }
+        SessionStatus status = Session.Channel.CurrentStatus;
+        return status == SessionStatus.Busy || status == SessionStatus.Waiting;
+    }
+
+    public void Dispose()
+    {
+        if (selfReference != null)
+        {
+            selfReference.Dispose();
+        }
+    }
+
+    private sealed class PendingAttachment
+    {
+        public PendingAttachment(string id, string name, bool isImage)
+        {
+            Id = id;
+            Name = name;
+            IsImage = isImage;
+        }
+
+        public string Id { get; }
+
+        public string Name { get; }
+
+        public bool IsImage { get; }
+    }
+}

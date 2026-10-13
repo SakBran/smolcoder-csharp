@@ -1,0 +1,236 @@
+@inject MarkdownRenderer Markdown
+
+@if (Item.Kind == UiEventKind.User)
+{
+    <div class="row user">
+        <div class="bubble">
+            <span class="text">@Item.Text</span>
+            @if (Item.Files.Count > 0)
+            {
+                <div class="chips">
+                    @foreach (UiFile file in Item.Files)
+                    {
+                        <span class="chip">
+                            @if (file.IsImage)
+                            {
+                                <img src="@UploadUrl(file)" alt="" />
+                            }
+                            @file.Name
+                        </span>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+else if (Item.Kind == UiEventKind.Assistant)
+{
+    <div class="row assistant">@((MarkupString)Markdown.ToHtml(Item.Text))</div>
+}
+else if (Item.Kind == UiEventKind.Thinking)
+{
+    <details class="row thinking">
+        <summary>thinking · @Item.Text.Length chars</summary>
+        <div>@Item.Text</div>
+    </details>
+}
+else if (Item.Kind == UiEventKind.Tool)
+{
+    <div class="row tool"><span class="arrow">→</span> <span class="name">@Item.Name</span> @Item.Text</div>
+}
+else if (Item.Kind == UiEventKind.Result)
+{
+    <details class="row result">
+        <summary>
+            @if (Item.IsError)
+            {
+                <span class="bad">✗ @Item.Text</span>
+            }
+            else
+            {
+                <span class="ok">✓</span> @Item.Text @MoreLines()
+            }
+        </summary>
+        <pre>@Item.Body</pre>
+    </details>
+}
+else if (Item.Kind == UiEventKind.Plan)
+{
+    <div class="row plan">
+        <div class="head">Plan @DoneCount()/@Item.PlanSteps.Count</div>
+        @for (int index = 0; index < Item.PlanSteps.Count; index++)
+        {
+            UiPlanStep step = Item.PlanSteps[index];
+            <div class="@StepClass(step, index)">@StepMark(step, index) @step.Text</div>
+        }
+    </div>
+}
+else if (Item.Kind == UiEventKind.Line)
+{
+    <div class="@LineClass()">@Item.Text</div>
+}
+else if (Item.Kind == UiEventKind.Print)
+{
+    <div class="row print">@Item.Text</div>
+}
+else if (Item.Kind == UiEventKind.TurnEnd)
+{
+    <div class="turnend">■ @Item.Text</div>
+}
+else if (Item.Kind == UiEventKind.Confirm)
+{
+    <div class="ask">
+        <div class="question">Run this command?</div>
+        <code>@Item.Text</code>
+        @if (Item.Reason != null)
+        {
+            <div class="reason">It @Item.Reason.</div>
+        }
+        @if (Item.Answered)
+        {
+            <div class="answered">→ @Item.Answer</div>
+        }
+        else
+        {
+            <div class="buttons">
+                <button class="button primary" @onclick='() => Answer("yes", null)'>Yes</button>
+                <button class="button" @onclick='() => Answer("always", null)'>Always allow this program</button>
+                <button class="button danger" @onclick='() => Answer("no", null)'>No</button>
+            </div>
+        }
+    </div>
+}
+else if (Item.Kind == UiEventKind.Select)
+{
+    <div class="ask">
+        <div class="question">@Item.Text</div>
+        @if (Item.Answered)
+        {
+            <div class="answered">→ @Item.Answer</div>
+        }
+        else
+        {
+            @for (int index = 0; index < Item.Options.Count; index++)
+            {
+                int chosen = index;
+                SelectOption option = Item.Options[index];
+                <button class="@OptionClass(option)" @onclick="() => Answer(option.Label, chosen)">
+                    @option.Label
+                    @if (option.Hint != null)
+                    {
+                        <span class="hint">@option.Hint</span>
+                    }
+                </button>
+            }
+            <div class="buttons">
+                <button class="button" @onclick='() => Answer("cancelled", null)'>Cancel</button>
+            </div>
+        }
+    </div>
+}
+else if (Item.Kind == UiEventKind.Prompt)
+{
+    <div class="ask">
+        <div class="question">@Item.Text</div>
+        @if (Item.Answered)
+        {
+            <div class="answered">→ @Item.Answer</div>
+        }
+        else
+        {
+            <input class="rename-input" placeholder="@Item.Placeholder" @bind="promptValue" />
+            <div class="buttons">
+                <button class="button primary" @onclick="() => Answer(promptValue, null)">OK</button>
+                <button class="button" @onclick="() => Answer(null, null)">Cancel</button>
+            </div>
+        }
+    </div>
+}
+
+@code
+{
+    private string promptValue = string.Empty;
+
+    [Parameter]
+    public UiEvent Item { get; set; } = new UiEvent();
+
+    [Parameter]
+    public string SessionId { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<AnswerRequest> OnAnswer { get; set; }
+
+    private Task Answer(string? answer, int? index)
+    {
+        return OnAnswer.InvokeAsync(new AnswerRequest(Item.AskId, answer, index));
+    }
+
+    private string UploadUrl(UiFile file)
+    {
+        return "/api/upload?sid=" + Uri.EscapeDataString(SessionId) + "&id=" + Uri.EscapeDataString(file.Id);
+    }
+
+    private string MoreLines()
+    {
+        if (Item.Body == null)
+        {
+            return string.Empty;
+        }
+        int lines = Item.Body.Split('\n').Length;
+        if (lines > 1)
+        {
+            return "(+" + (lines - 1) + " lines)";
+        }
+        return string.Empty;
+    }
+
+    private int DoneCount()
+    {
+        return Item.PlanSteps.Count(step => step.Done);
+    }
+
+    private string StepClass(UiPlanStep step, int index)
+    {
+        if (step.Done)
+        {
+            return "step done";
+        }
+        if (index == Item.PlanCurrent)
+        {
+            return "step current";
+        }
+        return "step pending";
+    }
+
+    private string StepMark(UiPlanStep step, int index)
+    {
+        if (step.Done)
+        {
+            return "✔";
+        }
+        if (index == Item.PlanCurrent)
+        {
+            return "▶";
+        }
+        return "○";
+    }
+
+    private string LineClass()
+    {
+        string kind = "status";
+        if (Item.Name != null)
+        {
+            kind = Item.Name;
+        }
+        return "row line " + kind;
+    }
+
+    private static string OptionClass(SelectOption option)
+    {
+        if (option.Current)
+        {
+            return "option current";
+        }
+        return "option";
+    }
+}

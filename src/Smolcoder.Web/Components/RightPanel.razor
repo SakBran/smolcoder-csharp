@@ -1,0 +1,56 @@
+<aside class="panel">
+    <div class="tabs">
+        <button class="@TabClass("files")" @onclick='() => Show("files")'>Files</button>
+        <button class="@TabClass("terminal")" @onclick='() => Show("terminal")'>Terminal</button>
+        <button class="@TabClass("browser")" @onclick='() => Show("browser")'>Browser</button>
+    </div>
+    <div class="tab-body">
+        @if (Session == null)
+        {
+            <div class="browser"><div class="hint">Pick a session to see its files, terminal and browser.</div></div>
+        }
+        else if (activeTab == "files")
+        {
+            <FilesTab Session="Session" />
+        }
+        else if (activeTab == "terminal")
+        {
+            <TerminalTab Session="Session" />
+        }
+        else
+        {
+            <BrowserTab Session="Session" HubPort="HubPort" />
+        }
+    </div>
+</aside>
+
+@code
+{
+    private string activeTab = "files";
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    [Parameter]
+    public int HubPort { get; set; }
+
+    public void ShowTerminal()
+    {
+        activeTab = "terminal";
+        StateHasChanged();
+    }
+
+    private void Show(string tab)
+    {
+        activeTab = tab;
+    }
+
+    private string TabClass(string tab)
+    {
+        if (tab == activeTab)
+        {
+            return "active";
+        }
+        return string.Empty;
+    }
+}

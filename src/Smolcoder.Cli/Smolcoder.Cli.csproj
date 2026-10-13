@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Version>0.1.0</Version>
+    <!-- The Blazor script (_framework/blazor.web.js) comes with the framework web assets. -->
+    <RequiresAspNetWebAssets>true</RequiresAspNetWebAssets>
+    <AssemblyName>smol</AssemblyName>
+    <RootNamespace>Smolcoder.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Smolcoder.Application\Smolcoder.Application.csproj" />
+    <ProjectReference Include="..\Smolcoder.Infrastructure\Smolcoder.Infrastructure.csproj" />
+    <ProjectReference Include="..\Smolcoder.Web\Smolcoder.Web.csproj" />
+  </ItemGroup>
+
+</Project>

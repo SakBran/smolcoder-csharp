@@ -1,0 +1,131 @@
+@inject IJSRuntime JS
+
+<div class="browser">
+    <div class="browser-bar">
+        <input list="smol-urls" placeholder="http://localhost:5173" @bind="address" @onkeydown="KeyAsync" />
+        <datalist id="smol-urls">
+            @foreach (string url in Urls())
+            {
+                <option value="@url"></option>
+            }
+        </datalist>
+        <button class="icon-button" title="Go / reload" @onclick="Go">⟳</button>
+        <button class="icon-button" title="Open in a new tab" @onclick="OpenOutsideAsync">↗</button>
+    </div>
+    @if (problem != null)
+    {
+        <div class="hint" style="color: var(--red)">@problem</div>
+    }
+    @if (current != null)
+    {
+        <iframe src="@current" @key="reloadKey" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-modals" referrerpolicy="no-referrer"></iframe>
+    }
+    else
+    {
+        <div class="hint">
+            Preview a dev server the agent started.
+            @if (Urls().Count > 0)
+            {
+                <br />
+                @foreach (string url in Urls())
+                {
+                    <button class="option" @onclick="() => Open(url)">@url</button>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code
+{
+    private string address = string.Empty;
+    private string? current;
+    private string? problem;
+    private int reloadKey;
+
+    [Parameter]
+    public LiveSession? Session { get; set; }
+
+    [Parameter]
+    public int HubPort { get; set; }
+
+    private List<string> Urls()
+    {
+        if (Session == null)
+        {
+            return new List<string>();
+        }
+        SessionState? state = Session.State();
+        if (state == null)
+        {
+            return new List<string>();
+        }
+        return state.Urls;
+    }
+
+    private async Task KeyAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await Task.Yield();
+            Go();
+        }
+    }
+
+    private void Open(string url)
+    {
+        address = url;
+        Go();
+    }
+
+    private void Go()
+    {
+        string? checkedUrl = Check(address);
+        if (checkedUrl == null)
+        {
+            return;
+        }
+        current = checkedUrl;
+        address = checkedUrl;
+        reloadKey++;
+    }
+
+    private async Task OpenOutsideAsync()
+    {
+        string? checkedUrl = Check(address);
+        if (checkedUrl != null)
+        {
+            await JS.InvokeVoidAsync("smol.openInNewTab", checkedUrl);
+        }
+    }
+
+    /// <summary>
+    /// Only http and https. The hub itself is refused, so the page never frames its own controls.
+    /// </summary>
+    private string? Check(string text)
+    {
+        problem = null;
+        string value = text.Trim();
+        if (value.Length == 0)
+        {
+            return null;
+        }
+        if (!value.Contains("://"))
+        {
+            value = "http://" + value;
+        }
+        Uri? uri;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || (uri.Scheme != "http" && uri.Scheme != "https"))
+        {
+            problem = "Only http and https addresses can be opened.";
+            return null;
+        }
+        bool local = uri.Host == "localhost" || uri.Host == "127.0.0.1" || uri.Host == "[::1]";
+        if (local && uri.Port == HubPort)
+        {
+            problem = "That is smolcoder itself. Open your app's address instead.";
+            return null;
+        }
+        return uri.ToString();
+    }
+}
