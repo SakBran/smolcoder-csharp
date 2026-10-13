@@ -48,6 +48,17 @@ public sealed class LiveSession
     public string? StartError { get; private set; }
 
     /// <summary>
+    /// True when the session could not start because no usable model was found.
+    /// The page shows the setup steps instead of the transcript.
+    /// </summary>
+    public bool NeedsSetup { get; private set; }
+
+    /// <summary>
+    /// The model a restored session asked for, when it is no longer available.
+    /// </summary>
+    public string? MissingModel { get; private set; }
+
+    /// <summary>
     /// Model title attempts so far. At most two are made.
     /// </summary>
     public int TitleAttempts { get; set; }
@@ -90,6 +101,13 @@ public sealed class LiveSession
         {
             chosen = await modelSelector.PrepareModelAsync(preferences, settings, label => Channel.StartSpinner(label), CancellationToken.None);
         }
+        catch (ModelNotFoundException exception)
+        {
+            MissingModel = exception.Wanted;
+            NeedsSetup = true;
+            Fail(exception.Message);
+            return false;
+        }
         catch (Exception exception)
         {
             Fail(exception.Message);
@@ -101,7 +119,8 @@ public sealed class LiveSession
         }
         if (chosen == null)
         {
-            Fail(modelSelector.NoModelsMessage());
+            NeedsSetup = true;
+            Fail("No usable model found yet.");
             return false;
         }
 
@@ -121,8 +140,10 @@ public sealed class LiveSession
         Meta.Model = chosen.Id;
         Meta.Backend = chosen.Backend;
         StartError = null;
+        NeedsSetup = false;
+        MissingModel = null;
 
-        Channel.Status("● " + chosen.Backend + " · " + chosen.Id + " · ctx " + chosen.ContextWindow.ToString("N0") + " · " + Domain.Modes.PermissionModes.Label(session.Agent.Mode) + " mode");
+        Channel.Status("● " + ModelLabels.BackendLabel(chosen) + " · " + chosen.Id + " · ctx " + chosen.ContextWindow.ToString("N0") + " · " + Domain.Modes.PermissionModes.Label(session.Agent.Mode) + " mode");
         session.Announce();
         _ = Task.Run(async () =>
         {
@@ -146,6 +167,18 @@ public sealed class LiveSession
             return false;
         }
         return Channel.Send(text, attachments);
+    }
+
+    /// <summary>
+    /// Switches a running session to another model after the current turn.
+    /// </summary>
+    public bool ChooseModel(ModelDescriptor model)
+    {
+        if (Session == null)
+        {
+            return false;
+        }
+        return Channel.RequestModel(model);
     }
 
     public void CycleMode()
@@ -254,7 +287,10 @@ public sealed class LiveSession
     {
         StartError = message;
         Channel.Error(message);
-        Channel.Warn("Fix the problem above, then click this session in the sidebar to retry.");
+        if (!NeedsSetup)
+        {
+            Channel.Warn("Fix the problem above, then click this session in the sidebar to retry.");
+        }
         Channel.SetStatus(SessionStatus.Error);
         RaiseChanged();
     }

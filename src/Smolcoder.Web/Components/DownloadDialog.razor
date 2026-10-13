@@ -1,0 +1,139 @@
+@implements IDisposable
+@inject ModelLibrary Library
+@inject ModelDialogs Dialogs
+
+<div class="modal-backdrop" @onclick="Dialogs.Close">
+    <div class="modal" @onclick:stopPropagation="true">
+        <div class="modal-head">Download a model with Ollama</div>
+        <div class="modal-body">
+            @if (targets.Count > 1)
+            {
+                <label class="field">
+                    <span>Download to</span>
+                    <select @bind="target">
+                        @foreach (KeyValuePair<string, string> pair in targets)
+                        {
+                            <option value="@pair.Key">@pair.Value</option>
+                        }
+                    </select>
+                </label>
+            }
+            <div class="field-note">Recommended for this computer (@MemoryText() memory). All of these can read and edit files.</div>
+            <div class="modal-list">
+                @foreach (RecommendedModel model in RecommendedModels.All)
+                {
+                    bool fits = RecommendedModels.Fits(model, memory);
+                    <button class="model-row @(fits ? "" : "dim")" @onclick="() => Start(model.Name)">
+                        <span class="model-name">@model.Name</span>
+                        @if (Installed(model.Name))
+                        {
+                            <span class="badge ok">installed</span>
+                        }
+                        else if (!fits)
+                        {
+                            <span class="badge warn" title="Needs about @model.MinimumMemoryGigabytes GB of memory">too big</span>
+                        }
+                        <span class="model-hint">@model.DownloadGigabytes.ToString("0.#") GB · @model.Why</span>
+                    </button>
+                }
+            </div>
+            <div class="setup-actions">
+                <input class="text-input" placeholder="any model from ollama.com, e.g. llama3.1:8b" @bind="typed" @bind:event="oninput" @onkeydown="TypedKey" />
+                <button class="button" disabled="@(typed.Trim().Length == 0)" @onclick="() => Start(typed)">Download</button>
+            </div>
+            @if (problem != null)
+            {
+                <div class="line error">@problem</div>
+            }
+            @foreach (DownloadState download in Library.Downloads.Snapshot())
+            {
+                <DownloadRow Download="download" />
+            }
+        </div>
+        <div class="modal-foot">
+            <a class="field-note" href="https://ollama.com/search?c=tools" target="_blank" rel="noopener">Browse tool-capable models on ollama.com</a>
+            <span class="spacer"></span>
+            <button class="button" @onclick="Dialogs.Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@code
+{
+    private Dictionary<string, string> targets = new Dictionary<string, string>();
+    private HashSet<string> installed = new HashSet<string>();
+    private string target = string.Empty;
+    private string typed = string.Empty;
+    private string? problem;
+    private long memory;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Library.Downloads.Changed += OnDownloadsChanged;
+        SetupStatus status = await Library.SetupStatusAsync(CancellationToken.None);
+        memory = status.MemoryBytes;
+        targets[status.OllamaBaseUrl] = "This computer";
+        target = status.OllamaBaseUrl;
+        foreach (ModelDescriptor model in await Library.ListAsync(false))
+        {
+            if (model.Backend != Backends.Ollama)
+            {
+                continue;
+            }
+            if (model.Host == null)
+            {
+                installed.Add(model.Id);
+            }
+            else if (!targets.ContainsKey(model.BaseUrl))
+            {
+                targets[model.BaseUrl] = model.Host;
+            }
+        }
+        if (Dialogs.DownloadTarget != null && targets.ContainsKey(Dialogs.DownloadTarget))
+        {
+            target = Dialogs.DownloadTarget;
+        }
+    }
+
+    private bool Installed(string name)
+    {
+        return target == targets.Keys.FirstOrDefault() && installed.Contains(name);
+    }
+
+    private void Start(string name)
+    {
+        problem = null;
+        try
+        {
+            Library.StartDownload(name, target);
+            typed = string.Empty;
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+    }
+
+    private void TypedKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && typed.Trim().Length > 0)
+        {
+            Start(typed);
+        }
+    }
+
+    private string MemoryText()
+    {
+        return Math.Round(memory / (1024.0 * 1024.0 * 1024.0)).ToString("0") + " GB";
+    }
+
+    private void OnDownloadsChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Library.Downloads.Changed -= OnDownloadsChanged;
+    }
+}

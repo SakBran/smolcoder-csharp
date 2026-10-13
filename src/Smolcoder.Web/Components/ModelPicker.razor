@@ -1,0 +1,197 @@
+@implements IDisposable
+@inject ModelLibrary Library
+@inject ModelDialogs Dialogs
+
+<span class="model-picker">
+    <button class="model-button" title="@ButtonTitle()" disabled="@Busy()" @onclick="ToggleAsync">
+        @State.Model <span class="model-backend">@BackendText()</span> <span class="caret">▾</span>
+    </button>
+    @if (open)
+    {
+        <div class="popover-backdrop" @onclick="Close"></div>
+        <div class="popover">
+            <div class="popover-head">
+                <span>Models</span>
+                <span class="spacer"></span>
+                <button class="icon-button" title="Look again" @onclick="RefreshAsync">↻</button>
+            </div>
+            <div class="popover-list">
+                @if (models == null)
+                {
+                    <div class="popover-note">looking for models…</div>
+                }
+                else if (models.Count == 0)
+                {
+                    <div class="popover-note">No models found. Download one, add a server, or paste a DeepSeek key below.</div>
+                }
+                else
+                {
+                    @foreach (IGrouping<string, ModelDescriptor> group in models.GroupBy(GroupName))
+                    {
+                        <div class="popover-group">@group.Key</div>
+                        @foreach (ModelDescriptor model in group)
+                        {
+                            <button class="model-row @(IsCurrent(model) ? "current" : "")" @onclick="() => Choose(model)">
+                                <span class="model-name">@model.Id</span>
+                                @if (model.SupportsTools == false)
+                                {
+                                    <span class="badge warn" title="This model cannot call tools, so it cannot read or edit files.">no tools</span>
+                                }
+                                @if (model.Loaded == false)
+                                {
+                                    <span class="badge" title="LM Studio will load it on first use.">not loaded</span>
+                                }
+                                @if (IsCurrent(model))
+                                {
+                                    <span class="check">✓</span>
+                                }
+                                <span class="model-hint">@Hint(model)</span>
+                            </button>
+                        }
+                    }
+                }
+            </div>
+            <div class="popover-foot">
+                <button class="button" @onclick="() => OpenDialog(ModelDialog.Download)">Download a model…</button>
+                <button class="button" @onclick="() => OpenDialog(ModelDialog.Servers)">Servers…</button>
+                <button class="button" @onclick="() => OpenDialog(ModelDialog.DeepSeekKey)">DeepSeek key…</button>
+            </div>
+        </div>
+    }
+</span>
+
+@code
+{
+    private bool open;
+    private IReadOnlyList<ModelDescriptor>? models;
+
+    [Parameter]
+    public LiveSession Session { get; set; } = null!;
+
+    [Parameter]
+    public SessionState State { get; set; } = null!;
+
+    protected override void OnInitialized()
+    {
+        Library.Changed += OnLibraryChanged;
+    }
+
+    private async Task ToggleAsync()
+    {
+        open = !open;
+        if (open)
+        {
+            await LoadAsync(false);
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        await LoadAsync(true);
+    }
+
+    private async Task LoadAsync(bool refresh)
+    {
+        models = null;
+        StateHasChanged();
+        try
+        {
+            models = await Library.ListAsync(refresh);
+        }
+        catch (Exception)
+        {
+            models = new List<ModelDescriptor>();
+        }
+    }
+
+    private void Choose(ModelDescriptor model)
+    {
+        open = false;
+        if (!IsCurrent(model))
+        {
+            Session.ChooseModel(model);
+        }
+    }
+
+    private void Close()
+    {
+        open = false;
+    }
+
+    private void OpenDialog(ModelDialog dialog)
+    {
+        open = false;
+        Dialogs.Show(dialog);
+    }
+
+    private bool Busy()
+    {
+        return Session.Channel.CurrentStatus == SessionStatus.Busy || Session.Channel.CurrentStatus == SessionStatus.Waiting;
+    }
+
+    private string ButtonTitle()
+    {
+        if (Busy())
+        {
+            return "Switch models after this turn";
+        }
+        return "Switch model";
+    }
+
+    private bool IsCurrent(ModelDescriptor model)
+    {
+        return model.Id == State.Model && model.Backend == State.Backend && model.Host == State.Host;
+    }
+
+    private string BackendText()
+    {
+        if (State.Host != null)
+        {
+            return Backends.DisplayName(State.Backend).ToLowerInvariant() + " @ " + State.Host;
+        }
+        return Backends.DisplayName(State.Backend).ToLowerInvariant();
+    }
+
+    private static string GroupName(ModelDescriptor model)
+    {
+        if (model.Host == null)
+        {
+            return "This computer";
+        }
+        if (model.Host == "cloud")
+        {
+            return "Cloud";
+        }
+        return model.Host;
+    }
+
+    /// <summary>
+    /// The picker hint without the host, which the group heading already shows.
+    /// </summary>
+    private static string Hint(ModelDescriptor model)
+    {
+        ModelDescriptor local = model.Copy();
+        local.Host = null;
+        local.Loaded = null;
+        local.SupportsTools = null;
+        return ModelLabels.PickerHint(local);
+    }
+
+    private void OnLibraryChanged()
+    {
+        if (!open)
+        {
+            return;
+        }
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAsync(false);
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Library.Changed -= OnLibraryChanged;
+    }
+}

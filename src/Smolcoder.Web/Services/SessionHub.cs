@@ -2,6 +2,8 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Smolcoder.Application.Abstractions.Persistence;
+using Smolcoder.Application.Abstractions.Providers;
+using Smolcoder.Application.Models;
 using Smolcoder.Application.Abstractions.Time;
 using Smolcoder.Application.Abstractions.Tools;
 using Smolcoder.Application.Sessions;
@@ -44,7 +46,8 @@ public sealed class SessionHub : IDisposable
         IAttachmentStore attachmentStore,
         ILineTerminalFactory terminalFactory,
         IClock clock,
-        HubOptions options)
+        HubOptions options,
+        ModelLibrary modelLibrary)
     {
         this.modelSelector = modelSelector;
         this.sessionFactory = sessionFactory;
@@ -55,6 +58,13 @@ public sealed class SessionHub : IDisposable
         this.terminalFactory = terminalFactory;
         this.clock = clock;
         this.options = options;
+        // A finished download is what a waiting session was missing.
+        // Ollama lists a name without a tag as name:latest.
+        modelLibrary.Downloads.Completed += download =>
+        {
+            string id = download.Model.Contains(':') ? download.Model : download.Model + ":latest";
+            _ = RetryWaitingAsync(id, Backends.Ollama, download.BaseUrl);
+        };
     }
 
     /// <summary>
@@ -156,7 +166,61 @@ public sealed class SessionHub : IDisposable
     /// <summary>
     /// Resumes a saved session, or retries one that failed to start.
     /// </summary>
-    public async Task ResumeAsync(string sessionId)
+    public Task ResumeAsync(string sessionId)
+    {
+        return ResumeAsync(sessionId, null);
+    }
+
+    /// <summary>
+    /// Starts a session that is waiting for setup on a model the user picked or just downloaded.
+    /// </summary>
+    public Task StartWithModelAsync(string sessionId, string modelId, string backend, string? baseUrl)
+    {
+        return ResumeAsync(sessionId, preferences =>
+        {
+            preferences.Model = modelId;
+            preferences.Backend = backend;
+            preferences.BaseUrl = baseUrl;
+        });
+    }
+
+    /// <summary>
+    /// Retries every session that is waiting for a model. Called when a download finishes
+    /// or a key or server was added.
+    /// </summary>
+    public async Task RetryWaitingAsync(string? modelId, string? backend, string? baseUrl)
+    {
+        List<LiveSession> waiting;
+        lock (gate)
+        {
+            waiting = live.Values.Where(session => session.NeedsSetup).ToList();
+        }
+        foreach (LiveSession session in waiting)
+        {
+            try
+            {
+                if (modelId != null && backend != null)
+                {
+                    await StartWithModelAsync(session.Id, modelId, backend, baseUrl);
+                }
+                else
+                {
+                    await ResumeAsync(session.Id, preferences =>
+                    {
+                        preferences.Model = null;
+                        preferences.Backend = null;
+                        preferences.BaseUrl = null;
+                    });
+                }
+            }
+            catch (Exception)
+            {
+                // The setup panel stays up; the user can try again.
+            }
+        }
+    }
+
+    private async Task ResumeAsync(string sessionId, Action<SessionPreferences>? adjust)
     {
         LiveSession? existing = Find(sessionId);
         if (existing != null && existing.IsRunning)
@@ -220,6 +284,10 @@ public sealed class SessionHub : IDisposable
             {
                 session.TitleAttempts = 99;
             }
+        }
+        if (adjust != null)
+        {
+            adjust(preferences);
         }
         RaiseChanged();
         await StartAsync(session, preferences, saved);

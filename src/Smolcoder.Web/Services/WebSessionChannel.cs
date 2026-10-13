@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Smolcoder.Application.Abstractions.Interaction;
+using Smolcoder.Application.Abstractions.Providers;
 using Smolcoder.Application.Tools;
 using Smolcoder.Domain.Attachments;
 using Smolcoder.Domain.Planning;
@@ -115,6 +116,21 @@ public sealed class WebSessionChannel : ISessionInteraction
             OnFirstMessage(trimmed);
         }
         inputs.Writer.TryWrite(new UserInput(trimmed, attachments));
+        NotifyChanged();
+        return true;
+    }
+
+    /// <summary>
+    /// A model picked in the page. It waits in the same queue as messages, so it never lands mid-turn.
+    /// </summary>
+    public bool RequestModel(ModelDescriptor model)
+    {
+        if (closed)
+        {
+            return false;
+        }
+        CurrentStatus = SessionStatus.Busy;
+        inputs.Writer.TryWrite(UserInput.ChooseModel(model));
         NotifyChanged();
         return true;
     }

@@ -3,6 +3,7 @@
 @inject SessionHub Hub
 @inject HubOptions Options
 @inject IJSRuntime JS
+@inject ModelDialogs Dialogs
 
 <PageTitle>@PageTitleText()</PageTitle>
 
@@ -37,6 +38,19 @@
     <FolderPicker OnPicked="FolderPickedAsync" OnCancel="HideFolderPicker" />
 }
 
+@if (Dialogs.Open == ModelDialog.Download)
+{
+    <DownloadDialog />
+}
+else if (Dialogs.Open == ModelDialog.Servers)
+{
+    <ServersDialog />
+}
+else if (Dialogs.Open == ModelDialog.DeepSeekKey)
+{
+    <DeepSeekKeyDialog />
+}
+
 @if (errorText != null)
 {
     <div class="toast" @onclick="ClearError">@errorText</div>
@@ -58,6 +72,12 @@
     {
         workspaces = Hub.Sidebar();
         Hub.Changed += OnHubChanged;
+        Dialogs.Changed += OnDialogsChanged;
+    }
+
+    private void OnDialogsChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -302,6 +322,7 @@
     public void Dispose()
     {
         Hub.Changed -= OnHubChanged;
+        Dialogs.Changed -= OnDialogsChanged;
         Watch(null);
         if (selfReference != null)
         {

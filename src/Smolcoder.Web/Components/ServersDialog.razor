@@ -1,0 +1,310 @@
+@implements IDisposable
+@inject ModelLibrary Library
+@inject ModelDialogs Dialogs
+@inject SessionHub Hub
+
+<div class="modal-backdrop" @onclick="Dialogs.Close">
+    <div class="modal" @onclick:stopPropagation="true">
+        <div class="modal-head">Model servers</div>
+        <div class="modal-body">
+            <div class="field-note">Models on this computer are found on their own. Add other machines, or any OpenAI-compatible server, here.</div>
+
+            @if (statuses == null)
+            {
+                <div class="setup-note">checking saved servers…</div>
+            }
+            else if (statuses.Count > 0)
+            {
+                <div class="server-list">
+                    @foreach (ServerStatus status in statuses)
+                    {
+                        <div class="server-row">
+                            <span class="dot @(status.Online ? "on" : "off")" title="@(status.Online ? "answering" : "not answering")"></span>
+                            <span class="server-name">@(status.Server.Name ?? status.Server.Address)</span>
+                            <span class="model-hint">@Describe(status)</span>
+                            <span class="spacer"></span>
+                            @if (status.Found.Any(info => info.Backend == Backends.Ollama))
+                            {
+                                <button class="link-button" @onclick="() => DownloadTo(status)">download a model</button>
+                            }
+                            <button class="icon-button" title="Remove" @onclick="() => RemoveAsync(status.Server.Address)">✕</button>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="setup-card">
+                <div class="setup-card-head">Add a server</div>
+                <div class="kind-choice">
+                    <label><input type="radio" name="kind" checked="@(kind == ServerKind.Auto)" @onchange="() => kind = ServerKind.Auto" /> Another computer running Ollama or LM Studio</label>
+                    <label><input type="radio" name="kind" checked="@(kind == ServerKind.OpenAiCompatible)" @onchange="() => kind = ServerKind.OpenAiCompatible" /> OpenAI-compatible server (llama.cpp, vLLM, Jan…)</label>
+                </div>
+                <div class="setup-actions">
+                    <input class="text-input" placeholder="@AddressPlaceholder()" @bind="address" @bind:event="oninput" />
+                    <input class="text-input narrow" placeholder="name (optional)" @bind="name" />
+                </div>
+                @if (kind == ServerKind.OpenAiCompatible)
+                {
+                    <div class="setup-actions">
+                        <input class="text-input" type="password" autocomplete="off" placeholder="API key (optional)" @bind="apiKey" />
+                    </div>
+                }
+                @if (InsecureWarning() is string warning)
+                {
+                    <div class="line warn">@warning</div>
+                }
+                <div class="setup-actions">
+                    <button class="button primary" disabled="@(adding || address.Trim().Length == 0)" @onclick="() => AddAsync(false)">@(adding ? "Checking…" : "Add")</button>
+                    @if (offerForce)
+                    {
+                        <button class="button" @onclick="() => AddAsync(true)">Save anyway</button>
+                    }
+                </div>
+                @if (problem != null)
+                {
+                    <div class="line error">@problem</div>
+                }
+            </div>
+
+            <div class="setup-card">
+                <div class="setup-card-head">Find models on my network</div>
+                <div class="setup-text">Looks for Ollama and LM Studio on the local network this computer is on.</div>
+                <div class="setup-actions">
+                    <button class="button" disabled="@scanning" @onclick="ScanAsync">@(scanning ? "Searching…" : "Search the network")</button>
+                    @if (scanning)
+                    {
+                        <button class="link-button" @onclick="StopScan">stop</button>
+                    }
+                </div>
+                @if (scanProgress != null && scanning)
+                {
+                    <div class="progress"><span style="width: @ScanPercent()%"></span></div>
+                }
+                @if (scan != null)
+                {
+                    @if (scan.Hosts.Count == 0)
+                    {
+                        <div class="setup-text">
+                            Nothing found on @scan.AddressesChecked addresses.
+                            @if (scan.EveryProbeFailed)
+                            {
+                                <span>No device answered at all. If other machines are switched on, macOS may be blocking local network access: allow your terminal app under System Settings → Privacy &amp; Security → Local Network, then search again.</span>
+                            }
+                            else
+                            {
+                                <span>The other machine's server must listen on the network: for Ollama set OLLAMA_HOST=0.0.0.0, for LM Studio turn on "Serve on Local Network".</span>
+                            }
+                        </div>
+                    }
+                    @foreach (FoundHost host in scan.Hosts)
+                    {
+                        <div class="server-row">
+                            <span class="dot on"></span>
+                            <span class="server-name">@host.HostName</span>
+                            <span class="model-hint">@string.Join(", ", host.Servers.Select(server => Backends.DisplayName(server.Backend) + " · " + server.Models.Count + " models"))</span>
+                            <span class="spacer"></span>
+                            @if (IsSaved(host))
+                            {
+                                <span class="badge ok">added</span>
+                            }
+                            else
+                            {
+                                <button class="button" @onclick="() => AddFoundAsync(host)">Add</button>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+        <div class="modal-foot">
+            <span class="spacer"></span>
+            <button class="button" @onclick="Dialogs.Close">Done</button>
+        </div>
+    </div>
+</div>
+
+@code
+{
+    private List<ServerStatus>? statuses;
+    private ServerKind kind = ServerKind.Auto;
+    private string address = string.Empty;
+    private string name = string.Empty;
+    private string apiKey = string.Empty;
+    private bool adding;
+    private bool offerForce;
+    private string? problem;
+    private bool scanning;
+    private ScanProgress? scanProgress;
+    private NetworkScanResult? scan;
+    private CancellationTokenSource? scanCancel;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        statuses = await Library.ServersAsync(CancellationToken.None);
+    }
+
+    private string AddressPlaceholder()
+    {
+        if (kind == ServerKind.OpenAiCompatible)
+        {
+            return "http://192.168.1.50:8080 or https://llm.example.com/v1";
+        }
+        return "192.168.1.50 or gpu-box.local";
+    }
+
+    private string? InsecureWarning()
+    {
+        string text = address.Trim();
+        if (text.Length == 0 || text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        try
+        {
+            ServerAddress parsed = ServerAddress.Parse(text);
+            if (!ServerAddress.IsPrivateHost(parsed.HostName))
+            {
+                return "This address is on the internet and the connection is not encrypted (http). Your code would travel in the clear. Prefer https:// or a VPN.";
+            }
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+        return null;
+    }
+
+    private static string Describe(ServerStatus status)
+    {
+        string where = status.Server.Name != null ? status.Server.Address + " · " : string.Empty;
+        if (!status.Online)
+        {
+            return where + "not answering";
+        }
+        string what = string.Join(", ", status.Found.Select(info => Backends.DisplayName(info.Backend)));
+        return where + what + " · " + status.ModelCount + " models" + (status.HasKey ? " · key saved" : string.Empty);
+    }
+
+    private async Task AddAsync(bool force)
+    {
+        adding = true;
+        problem = null;
+        StateHasChanged();
+        try
+        {
+            await Library.AddServerAsync(address, name, kind, apiKey, force, CancellationToken.None);
+            address = string.Empty;
+            name = string.Empty;
+            apiKey = string.Empty;
+            offerForce = false;
+            await LoadAsync();
+            _ = Hub.RetryWaitingAsync(null, null, null);
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+            offerForce = !force && exception is InvalidOperationException;
+        }
+        adding = false;
+    }
+
+    private async Task AddFoundAsync(FoundHost host)
+    {
+        problem = null;
+        try
+        {
+            string? label = host.HostName != host.Address ? host.HostName : null;
+            string target = label ?? host.Address;
+            await Library.AddServerAsync(target, null, ServerKind.Auto, null, true, CancellationToken.None);
+            await LoadAsync();
+            _ = Hub.RetryWaitingAsync(null, null, null);
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+    }
+
+    private bool IsSaved(FoundHost host)
+    {
+        foreach (SavedServer server in Library.SavedServers())
+        {
+            if (string.Equals(server.Address, host.Address, StringComparison.OrdinalIgnoreCase) || string.Equals(server.Address, host.HostName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private async Task RemoveAsync(string serverAddress)
+    {
+        Library.RemoveServer(serverAddress);
+        await LoadAsync();
+    }
+
+    private void DownloadTo(ServerStatus status)
+    {
+        ServerInfo? ollama = status.Found.FirstOrDefault(info => info.Backend == Backends.Ollama);
+        Dialogs.Show(ModelDialog.Download, ollama?.BaseUrl);
+    }
+
+    private async Task ScanAsync()
+    {
+        scanning = true;
+        scan = null;
+        scanProgress = null;
+        scanCancel = new CancellationTokenSource();
+        StateHasChanged();
+        DateTime lastDraw = DateTime.MinValue;
+        Progress<ScanProgress> progress = new Progress<ScanProgress>(report =>
+        {
+            scanProgress = report;
+            if (DateTime.UtcNow - lastDraw > TimeSpan.FromMilliseconds(250))
+            {
+                lastDraw = DateTime.UtcNow;
+                _ = InvokeAsync(StateHasChanged);
+            }
+        });
+        try
+        {
+            scan = await Library.ScanNetworkAsync(progress, scanCancel.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            scan = null;
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+        scanning = false;
+    }
+
+    private void StopScan()
+    {
+        if (scanCancel != null)
+        {
+            scanCancel.Cancel();
+        }
+    }
+
+    private string ScanPercent()
+    {
+        if (scanProgress == null || scanProgress.Total == 0)
+        {
+            return "0";
+        }
+        return (100.0 * scanProgress.Checked / scanProgress.Total).ToString("0", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    public void Dispose()
+    {
+        StopScan();
+    }
+}

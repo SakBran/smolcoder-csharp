@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Smolcoder.Application.Abstractions.Providers;
 using Smolcoder.Application.Abstractions.Time;
 using Smolcoder.Application.Agents;
+using Smolcoder.Application.Models;
 using Smolcoder.Application.Prompts;
 using Smolcoder.Application.Providers;
 using Smolcoder.Application.Sessions;
@@ -26,6 +27,8 @@ public static class DependencyInjection
         services.AddSingleton<IModelSelector, ModelSelector>();
         services.AddSingleton<IAgentSessionBuilder, AgentSessionBuilder>();
         services.AddSingleton<IInteractiveSessionFactory, InteractiveSessionFactory>();
+        services.AddSingleton<ModelDownloads>();
+        services.AddSingleton<ModelLibrary>();
         return services;
     }
 }

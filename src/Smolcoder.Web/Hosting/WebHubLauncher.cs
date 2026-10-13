@@ -74,6 +74,7 @@ public static class WebHubLauncher
         builder.Services.AddSingleton<HubOptions>(options);
         builder.Services.AddSingleton<SessionHub>();
         builder.Services.AddSingleton<MarkdownRenderer>();
+        builder.Services.AddScoped<ModelDialogs>();
         builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
         WebApplication app = builder.Build();

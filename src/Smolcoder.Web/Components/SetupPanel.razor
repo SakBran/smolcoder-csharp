@@ -1,0 +1,245 @@
+@implements IDisposable
+@inject ModelLibrary Library
+@inject SessionHub Hub
+@inject ModelDialogs Dialogs
+@inject IJSRuntime JS
+
+<div class="setup">
+    <div class="setup-title">Let's get a model running</div>
+    @if (Session.MissingModel != null)
+    {
+        <div class="setup-lead">This session used <b>@Session.MissingModel</b>, which isn't available right now.</div>
+    }
+    else
+    {
+        <div class="setup-lead">smolcoder needs a model to talk to. A model on this computer is free and private; DeepSeek's cloud is fast and cheap.</div>
+    }
+
+    @if (status == null)
+    {
+        <div class="setup-note">checking this computer…</div>
+    }
+    else
+    {
+        @if (others != null && others.Count > 0)
+        {
+            <div class="setup-card">
+                <div class="setup-card-head">Use a model you already have</div>
+                @foreach (ModelDescriptor model in others.Take(8))
+                {
+                    <button class="model-row" @onclick="() => UseAsync(model)">
+                        <span class="model-name">@model.Id</span>
+                        @if (model.SupportsTools == false)
+                        {
+                            <span class="badge warn">no tools</span>
+                        }
+                        <span class="model-hint">@ModelLabels.PickerHint(model)</span>
+                    </button>
+                }
+            </div>
+        }
+
+        <div class="setup-card">
+            <div class="setup-card-head"><span class="step">1</span> Run models on this computer with Ollama</div>
+            @if (status.Ollama == OllamaInstallState.NotInstalled)
+            {
+                <div class="setup-text">Install Ollama, then come back here.</div>
+                <div class="setup-actions">
+                    <a class="button primary" href="https://ollama.com/download" target="_blank" rel="noopener">Download Ollama</a>
+                    <span class="setup-or">or in a terminal:</span>
+                    <code class="copyable">brew install ollama</code>
+                    <button class="icon-button" title="Copy" @onclick='() => CopyAsync("brew install ollama")'>⧉</button>
+                </div>
+            }
+            else if (status.Ollama == OllamaInstallState.Stopped)
+            {
+                <div class="setup-text">Ollama is installed but not running.</div>
+                <div class="setup-actions">
+                    <button class="button primary" disabled="@starting" @onclick="StartOllamaAsync">@(starting ? "Starting…" : "Start Ollama")</button>
+                </div>
+            }
+            else
+            {
+                <div class="setup-text ok">✓ Ollama is running.</div>
+                @if (running == null)
+                {
+                    <div class="setup-text">@(HasLocalOllamaModels() ? "Pick one of your models above, or download another." : "Download a model to start.") This one fits your @MemoryText() computer:</div>
+                    <div class="setup-actions">
+                        <button class="button primary" @onclick="() => Download(status.Recommended.Name)">Download @status.Recommended.Title (@status.Recommended.DownloadGigabytes.ToString("0.#") GB)</button>
+                        <button class="button" @onclick="() => Dialogs.Show(ModelDialog.Download)">Other sizes…</button>
+                    </div>
+                    <div class="setup-note">@status.Recommended.Why</div>
+                }
+            }
+            @if (running != null)
+            {
+                <DownloadRow Download="running" />
+                @if (running.Succeeded)
+                {
+                    <div class="setup-text ok">✓ Downloaded. Starting the session…</div>
+                }
+            }
+        </div>
+
+        <div class="setup-card">
+            <div class="setup-card-head"><span class="step">2</span> Or use DeepSeek's cloud</div>
+            <DeepSeekKeyForm OnSaved="RetryAsync" />
+        </div>
+
+        <div class="setup-card">
+            <div class="setup-card-head"><span class="step">3</span> Or use a model on another machine</div>
+            <div class="setup-text">Ollama or LM Studio on another computer, or any OpenAI-compatible server (llama.cpp, vLLM, Jan…).</div>
+            <div class="setup-actions">
+                <button class="button" @onclick="() => Dialogs.Show(ModelDialog.Servers)">Add a server…</button>
+            </div>
+        </div>
+
+        <div class="setup-actions center">
+            <button class="button" disabled="@retrying" @onclick="RetryAsync">@(retrying ? "Looking…" : "Look again")</button>
+        </div>
+        @if (problem != null)
+        {
+            <div class="line error">@problem</div>
+        }
+    }
+</div>
+
+@code
+{
+    private SetupStatus? status;
+    private List<ModelDescriptor>? others;
+    private DownloadState? running;
+    private bool starting;
+    private bool retrying;
+    private string? problem;
+
+    [Parameter]
+    public LiveSession Session { get; set; } = null!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Library.Changed += OnLibraryChanged;
+        Library.Downloads.Changed += OnDownloadsChanged;
+        running = Library.Downloads.Snapshot().LastOrDefault(download => !download.Done);
+        await LoadAsync(false);
+    }
+
+    private async Task LoadAsync(bool refresh)
+    {
+        try
+        {
+            if (refresh)
+            {
+                Library.Invalidate();
+            }
+            status = await Library.SetupStatusAsync(CancellationToken.None);
+            IReadOnlyList<ModelDescriptor> models = await Library.ListAsync(false);
+            others = models.ToList();
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+    }
+
+    private async Task UseAsync(ModelDescriptor model)
+    {
+        problem = null;
+        try
+        {
+            await Hub.StartWithModelAsync(Session.Id, model.Id, model.Backend, model.BaseUrl);
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+    }
+
+    private async Task StartOllamaAsync()
+    {
+        starting = true;
+        problem = null;
+        StateHasChanged();
+        bool started = await Library.StartOllamaAsync(CancellationToken.None);
+        starting = false;
+        if (!started)
+        {
+            problem = "Ollama did not start. Open the Ollama app yourself, then click Look again.";
+        }
+        await LoadAsync(true);
+    }
+
+    private void Download(string model)
+    {
+        problem = null;
+        try
+        {
+            running = Library.StartDownload(model, null);
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+    }
+
+    private async Task RetryAsync()
+    {
+        retrying = true;
+        problem = null;
+        StateHasChanged();
+        Library.Invalidate();
+        await Hub.RetryWaitingAsync(null, null, null);
+        retrying = false;
+        await LoadAsync(false);
+    }
+
+    private async Task CopyAsync(string text)
+    {
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", text);
+    }
+
+    private bool HasLocalOllamaModels()
+    {
+        return others != null && others.Any(model => model.Backend == Backends.Ollama && model.Host == null);
+    }
+
+    private string MemoryText()
+    {
+        if (status == null)
+        {
+            return string.Empty;
+        }
+        return Math.Round(status.MemoryBytes / (1024.0 * 1024.0 * 1024.0)).ToString("0") + " GB";
+    }
+
+    private void OnLibraryChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await LoadAsync(false);
+            StateHasChanged();
+        });
+    }
+
+    private void OnDownloadsChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            if (running == null || running.Done)
+            {
+                DownloadState? latest = Library.Downloads.Snapshot().LastOrDefault();
+                if (latest != null)
+                {
+                    running = latest;
+                }
+            }
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        Library.Changed -= OnLibraryChanged;
+        Library.Downloads.Changed -= OnDownloadsChanged;
+    }
+}

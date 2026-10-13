@@ -57,6 +57,11 @@ public static class DependencyInjection
             return handler;
         });
         services.AddSingleton<ServerIdentifier>();
+        services.AddSingleton<ServerProbe>();
+        services.AddSingleton<IServerProbe>(provider => provider.GetRequiredService<ServerProbe>());
+        services.AddSingleton<INetworkScanner, NetworkScanner>();
+        services.AddSingleton<IModelDownloader, OllamaPuller>();
+        services.AddSingleton<ILocalOllama, LocalOllama>();
         services.AddSingleton<ModelDiscovery>();
         services.AddSingleton<DeepSeekBackend>();
         services.AddSingleton<IModelBackend>(provider => provider.GetRequiredService<DeepSeekBackend>());

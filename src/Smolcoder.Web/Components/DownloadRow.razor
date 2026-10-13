@@ -1,0 +1,55 @@
+@inject ModelLibrary Library
+
+<div class="download-row">
+    <div class="download-line">
+        <span class="model-name">@Download.Model</span>
+        <span class="download-status">@StatusText()</span>
+        @if (!Download.Done)
+        {
+            <button class="icon-button" title="Cancel" @onclick="() => Library.Downloads.Cancel(Download.Id)">✕</button>
+        }
+    </div>
+    <div class="progress"><span class="@BarClass()" style="width: @(Percent())%"></span></div>
+</div>
+
+@code
+{
+    [Parameter]
+    public DownloadState Download { get; set; } = null!;
+
+    private string StatusText()
+    {
+        if (Download.Error != null)
+        {
+            return Download.Error;
+        }
+        if (Download.Succeeded)
+        {
+            return "done";
+        }
+        if (Download.Total.HasValue && Download.Completed.HasValue)
+        {
+            return ModelLabels.Size(Download.Completed.Value) + " of " + ModelLabels.Size(Download.Total.Value);
+        }
+        return Download.Status;
+    }
+
+    private string Percent()
+    {
+        double value = Download.Percent ?? 0;
+        if (Download.Done)
+        {
+            value = 100;
+        }
+        return value.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private string BarClass()
+    {
+        if (Download.Error != null)
+        {
+            return "failed";
+        }
+        return string.Empty;
+    }
+}

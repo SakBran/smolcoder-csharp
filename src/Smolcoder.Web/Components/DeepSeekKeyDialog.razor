@@ -1,0 +1,24 @@
+@inject ModelDialogs Dialogs
+@inject SessionHub Hub
+
+<div class="modal-backdrop" @onclick="Dialogs.Close">
+    <div class="modal narrow" @onclick:stopPropagation="true">
+        <div class="modal-head">DeepSeek API key</div>
+        <div class="modal-body">
+            <DeepSeekKeyForm OnSaved="SavedAsync" />
+        </div>
+        <div class="modal-foot">
+            <span class="spacer"></span>
+            <button class="button" @onclick="Dialogs.Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@code
+{
+    private async Task SavedAsync()
+    {
+        await Hub.RetryWaitingAsync(null, null, null);
+        Dialogs.Close();
+    }
+}

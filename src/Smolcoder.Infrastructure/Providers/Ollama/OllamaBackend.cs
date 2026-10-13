@@ -73,7 +73,7 @@ public sealed class OllamaBackend : IModelBackend
             resolved.NumCtx = null;
             if (loaded.Value < SmallContext && (!maximum.HasValue || maximum.Value > loaded.Value))
             {
-                resolved.Note = "Ollama is set to a " + loaded.Value.ToString("N0") + "-token context, which a coding session fills quickly. Raise \"Context length\" in Ollama's settings, or start with --ctx 32768.";
+                resolved.Note = "Ollama is set to a " + loaded.Value.ToString("N0") + "-token context, which a coding session fills quickly. Raise \"Context length\" in Ollama's settings, or start smallcode with --ctx 32768.";
             }
             return resolved;
         }

@@ -1,0 +1,92 @@
+@inject ModelLibrary Library
+
+<div class="key-form">
+    @if (status == null)
+    {
+        <div class="setup-note">…</div>
+    }
+    else if (status.DeepSeekKey == KeySource.Environment)
+    {
+        <div class="setup-text ok">✓ Using DEEPSEEK_API_KEY from the environment.</div>
+    }
+    else
+    {
+        @if (status.DeepSeekKey == KeySource.Saved)
+        {
+            <div class="setup-text ok">
+                ✓ A key ending in …@status.DeepSeekKeyTail is saved on this computer.
+                <button class="link-button" @onclick="Forget">Forget it</button>
+            </div>
+        }
+        else
+        {
+            <div class="setup-text">Get a key at <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">platform.deepseek.com</a> and paste it here. It is saved only on this computer, readable by you alone.</div>
+        }
+        <div class="setup-actions">
+            <input class="text-input" type="password" placeholder="sk-…" autocomplete="off" @bind="key" @bind:event="oninput" @onkeydown="KeyDownAsync" />
+            <button class="button primary" disabled="@(checking || key.Trim().Length == 0)" @onclick="SaveAsync">@(checking ? "Checking…" : "Save key")</button>
+        </div>
+    }
+    @if (problem != null)
+    {
+        <div class="line error">@problem</div>
+    }
+</div>
+
+@code
+{
+    private SetupStatus? status;
+    private string key = string.Empty;
+    private bool checking;
+    private string? problem;
+
+    [Parameter]
+    public EventCallback OnSaved { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        status = await Library.SetupStatusAsync(CancellationToken.None);
+    }
+
+    private async Task KeyDownAsync(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SaveAsync();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (checking || key.Trim().Length == 0)
+        {
+            return;
+        }
+        checking = true;
+        problem = null;
+        StateHasChanged();
+        try
+        {
+            await Library.SaveDeepSeekKeyAsync(key, CancellationToken.None);
+            key = string.Empty;
+            await LoadAsync();
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception exception)
+        {
+            problem = exception.Message;
+        }
+        checking = false;
+    }
+
+    private async Task Forget()
+    {
+        Library.ForgetDeepSeekKey();
+        await LoadAsync();
+    }
+}

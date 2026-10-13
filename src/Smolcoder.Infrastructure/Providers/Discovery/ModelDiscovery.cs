@@ -22,13 +22,15 @@ public sealed class ModelDiscovery
     private static readonly TimeSpan NetworkTimeout = TimeSpan.FromMilliseconds(1500);
 
     private readonly ServerIdentifier identifier;
+    private readonly ServerProbe serverProbe;
     private readonly IHttpClientFactory httpClientFactory;
     private readonly ISettingsStore settingsStore;
     private readonly ISecretStore secretStore;
 
-    public ModelDiscovery(ServerIdentifier identifier, IHttpClientFactory httpClientFactory, ISettingsStore settingsStore, ISecretStore secretStore)
+    public ModelDiscovery(ServerIdentifier identifier, ServerProbe serverProbe, IHttpClientFactory httpClientFactory, ISettingsStore settingsStore, ISecretStore secretStore)
     {
         this.identifier = identifier;
+        this.serverProbe = serverProbe;
         this.httpClientFactory = httpClientFactory;
         this.settingsStore = settingsStore;
         this.secretStore = secretStore;
@@ -84,73 +86,10 @@ public sealed class ModelDiscovery
         return merged;
     }
 
-    /// <summary>
-    /// What a saved server is serving right now. Empty when nothing answered.
-    /// </summary>
-    public async Task<List<ServerInfo>> ProbeServerAsync(SavedServer server, CancellationToken token)
-    {
-        List<ServerInfo> found = new List<ServerInfo>();
-        ServerAddress address;
-        try
-        {
-            address = ServerAddress.Parse(server.Address);
-        }
-        catch (ArgumentException)
-        {
-            return found;
-        }
-        string? host = HostLabel(server, address);
-        if (server.Kind == ServerKind.OpenAiCompatible)
-        {
-            string root = ServerAddress.OpenAiRoot(server.Address);
-            ServerInfo? info = await identifier.IdentifyOpenAiAsync(root, secretStore.Get(server.SecretName), NetworkTimeout, token);
-            if (info != null)
-            {
-                SetHost(info.Models, host);
-                found.Add(info);
-            }
-            return found;
-        }
-        List<Task<ServerInfo?>> probes = new List<Task<ServerInfo?>>();
-        foreach (string url in address.Urls)
-        {
-            probes.Add(identifier.IdentifyAsync(url, NetworkTimeout, token));
-        }
-        foreach (Task<ServerInfo?> probe in probes)
-        {
-            ServerInfo? info = await probe;
-            if (info != null)
-            {
-                SetHost(info.Models, host);
-                found.Add(info);
-            }
-        }
-        return found;
-    }
-
-    /// <summary>
-    /// Saved servers on this computer count as local; others show their name.
-    /// </summary>
-    public static string? HostLabel(SavedServer server, ServerAddress address)
-    {
-        if (server.Name != null && server.Name.Length > 0)
-        {
-            return server.Name;
-        }
-        foreach (string url in address.Urls)
-        {
-            if (LocalEndpoints.IsLoopback(url))
-            {
-                return null;
-            }
-        }
-        return address.HostName;
-    }
-
     private async Task<List<ModelDescriptor>> SavedServerAsync(SavedServer server, CancellationToken token)
     {
         List<ModelDescriptor> models = new List<ModelDescriptor>();
-        foreach (ServerInfo info in await ProbeServerAsync(server, token))
+        foreach (ServerInfo info in await serverProbe.ProbeAsync(server, secretStore.Get(server.SecretName), NetworkTimeout, token))
         {
             models.AddRange(info.Models);
         }
