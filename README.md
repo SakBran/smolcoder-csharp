@@ -10,6 +10,15 @@ dotnet run --project src/Smolcoder.Cli -- --web            # browser UI for the 
 dotnet run --project src/Smolcoder.Cli -- -p "fix the failing test" --effort off   # one headless prompt
 ```
 
+### Install as a command
+
+```bash
+./install.sh          # publishes to ~/.smolcoder/app and adds /usr/local/bin/smallcode
+smallcode --web       # same as the dotnet run line above; run it from any project folder
+```
+
+Run `./install.sh` again after changing the code.
+
 `smol --web` prints a private link (127.0.0.1 only, with a random key). Open it in a browser.
 
 | Option | Meaning |
