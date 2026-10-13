@@ -77,6 +77,33 @@ public sealed class RequestDeadline : IDisposable
         return exception;
     }
 
+    /// <summary>
+    /// Runs one request under both limits and turns its cancellations into the right errors.
+    /// </summary>
+    public static async Task<T> RunAsync<T>(CancellationToken token, TimeSpan? totalTimeout, TimeSpan? idleTimeout, Func<RequestDeadline, Task<T>> work)
+    {
+        using (RequestDeadline deadline = new RequestDeadline(token, totalTimeout, idleTimeout))
+        {
+            try
+            {
+                return await work(deadline);
+            }
+            catch (OperationCanceledException exception)
+            {
+                throw deadline.Translate(exception);
+            }
+            catch (IOException exception)
+            {
+                Exception translated = deadline.Translate(exception);
+                if (translated == exception)
+                {
+                    throw;
+                }
+                throw translated;
+            }
+        }
+    }
+
     public void Dispose()
     {
         idleTimer.Dispose();
